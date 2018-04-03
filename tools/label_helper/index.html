@@ -29,6 +29,8 @@
       function checkKey(e) {
           e = e || window.event;
 
+          console.log(e);
+
           let preventDefault = true;
           let delta = {x: 0, y: 0};
           if (e.code === "ArrowUp") {
@@ -42,6 +44,10 @@
           }
           else if (e.code === "ArrowRight") {
              delta.x = 1;
+          } else if (e.code == "KeyN") {
+            nextRadio();
+          } else if (e.code == "KeyS" && e.ctrlKey) {
+            $("#save").click();
           } else {
             preventDefault = false;
           }
@@ -70,25 +76,37 @@
           redrawCanvas(context, boundingBoxes);
       }
 
-      let cn = $(".card-name");
       var canvRect = canvas.getBoundingClientRect();
-      boundingBoxes.set(cn.data("key"),
-        new BoundingBox("pink", cn.position().left - canvRect.left, cn.position().top - canvRect.top, (cn.position().left - canvRect.left) + cn.width(),
-        (cn.position().top - canvRect.top) + cn.height()));
+      if ({{.CardNameHelper.FontFamily}} !== "") {
+        let cn = $(".card-name");
+        boundingBoxes.set(cn.data("key"),
+          new BoundingBox("green", cn.position().left - canvRect.left, cn.position().top - canvRect.top, (cn.position().left - canvRect.left) + cn.width(),
+          (cn.position().top - canvRect.top) + cn.height() + {{.CardNameHelper.PaddingBottom}}));
+      }
+      if ({{.TypeLineHelper.FontFamily}} !== "") {
+        let tl = $(".type-line");
+        boundingBoxes.set(tl.data("key"),
+          new BoundingBox("pink", tl.position().left - canvRect.left, tl.position().top - canvRect.top, (tl.position().left - canvRect.left) + tl.width(),
+          (tl.position().top - canvRect.top) + tl.height() + {{.CardNameHelper.PaddingBottom}}));
+      }
+      if ({{.CollectorNumberHelper.FontFamily}} !== "") {
+        let cnu = $(".collector-number");
+        boundingBoxes.set(cnu.data("key"),
+          new BoundingBox("red", cnu.position().left - canvRect.left, cnu.position().top - canvRect.top, (cnu.position().left - canvRect.left) + cnu.width(),
+          (cnu.position().top - canvRect.top) + cnu.height() + {{.CollectorNumberHelper.PaddingBottom}}));
+      }
 
       redrawCanvas(context, boundingBoxes);
 
       $("#card").mousedown(function(event) {
-        var radio = $("input[name=boundingBoxType]:checked", "#boundingBoxForm");
         if (event.button == 0) {
+          let radio = $("input[name=boundingBoxType]:checked", "#boundingBoxForm");
           var offset = $("#card").offset();
           var canvRect = canvas.getBoundingClientRect();
           boundingBoxes.set(radio.val(), new BoundingBox(radio.data("color"), event.clientX - canvRect.left, event.clientY - canvRect.top));
           drawing = true;
         } else if (event.button == 2) {
-          let next = radio.next().next();
-          next.click();
-          return false;
+          nextRadio();
         }
       }).mouseup(function() {
         drawing = false;
@@ -139,6 +157,10 @@
         v.draw(context, k);
         v.round();
       });
+    }
+
+    function nextRadio() {
+      $("input[name=boundingBoxType]:checked", "#boundingBoxForm").next().next().click();
     }
 
     class BoundingBox {
@@ -212,20 +234,42 @@
       flex-direction: row;
     }
 
-    .card-name {
+    .helper {
       margin: 0px;
       position: absolute;
       color: rgba(0, 0, 0, 0);
-      font-family: {{.FontFamily}};
-      font-size: {{.FontSize}};
-      letter-spacing: {{.LetterSpacing}};
-      top: {{.Top}};
-      left: {{.Left}};
+      z-index: -1;
+    }
+
+    .card-name {
+      font-family: {{.CardNameHelper.FontFamily}};
+      font-size: {{.CardNameHelper.FontSize}};
+      letter-spacing: {{.CardNameHelper.LetterSpacing}};
+      top: {{.CardNameHelper.Top}};
+      left: {{.CardNameHelper.Left}};
+    }
+
+    .type-line {
+      font-family: {{.TypeLineHelper.FontFamily}};
+      top: {{.TypeLineHelper.Top}};
+      left: {{.TypeLineHelper.Left}};
+      font-size: {{.TypeLineHelper.FontSize}};
+      letter-spacing: {{.TypeLineHelper.LetterSpacing}};
+    }
+
+    .collector-number {
+      font-family: {{.CollectorNumberHelper.FontFamily}};
+      top: {{.CollectorNumberHelper.Top}};
+      left: {{.CollectorNumberHelper.Left}};
+      font-size: {{.CollectorNumberHelper.FontSize}};
+      letter-spacing: {{.CollectorNumberHelper.LetterSpacing}};
     }
   </style>
 </head>
 <body>
-  <p class="card-name" data-key="cardName">{{.CardName}}</p>
+  <p class="card-name helper" data-key="cardName">{{.CardName}}</p>
+  <p class="type-line helper" data-key="typeLine">{{.TypeLine}}</p>
+  <p class="collector-number helper" data-key="collectorNumber">{{.CollectorNumber}}</p>
   <div class="container">
     <canvas id="card" width="745px" height="1040px"></canvas>
     <form id="boundingBoxForm">

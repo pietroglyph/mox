@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"strconv"
+	"sync"
+	"time"
 
 	scryfall "github.com/BlueMonday/go-scryfall"
 	flag "github.com/ogier/pflag"
@@ -35,12 +38,22 @@ type boundingBox struct {
 	EndY   int `json:"endY"`
 }
 
+type helperTextCSS struct {
+	FontFamily    string
+	LetterSpacing string
+	Top           string
+	Left          string
+	FontSize      string
+	PaddingBottom int
+}
+
 var (
-	config        configuration
-	indexTemplate *template.Template
-	ctx           context.Context
-	client        *scryfall.Client
-	recentImages  map[string][]byte
+	config          configuration
+	indexTemplate   *template.Template
+	ctx             context.Context
+	client          *scryfall.Client
+	recentImages    map[string][]byte
+	recentImagesMux sync.RWMutex
 )
 
 func init() {
@@ -93,10 +106,14 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		card, err = client.GetRandomCard(ctx)
-		if err != nil {
-			loggedHTTPError(w, err.Error(), http.StatusInternalServerError)
-			return
+		for {
+			card, err = client.GetRandomCard(ctx)
+			if err != nil {
+				loggedHTTPError(w, err.Error(), http.StatusInternalServerError)
+				return
+			} else if card.Set != "PRM" && card.Set != "TD0" {
+				break
+			}
 		}
 	}
 
@@ -111,51 +128,122 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	recentImages[card.ID] = img
-
-	args := map[string]interface{}{
-		"UUID":            card.ID,
-		"URI":             template.URL("data:image/png;base64," + base64.StdEncoding.EncodeToString(img)),
-		"CardName":        card.Name,
-		"TypeLine":        card.TypeLine,
-		"CollectorNumber": card.CollectorNumber,
-		"Set":             card.SetName,
+	set, err := client.GetSet(ctx, card.Set)
+	if err != nil {
+		loggedHTTPError(w, err.Error(), http.StatusInternalServerError)
 	}
 
+	recentImagesMux.Lock()
+	recentImages[card.ID] = img
+	recentImagesMux.Unlock()
+
+	cname := helperTextCSS{}
+	tline := helperTextCSS{}
+	cnum := helperTextCSS{}
+
+	cname.PaddingBottom = 0
 	switch card.Frame {
 	case scryfall.Frame1993:
-		args["FontFamily"] = "GoudyMedieval"
-		args["LetterSpacing"] = "-0.6px"
+		tline.FontFamily = "MPlantin"
+		tline.Top = "588px"
+		tline.Left = "82px"
+		tline.FontSize = "32px"
+		tline.LetterSpacing = "1.5px"
+
+		cname.FontFamily = "GoudyMedieval"
+		cname.LetterSpacing = "-0.6px"
 		if card.Set == "LEA" || card.Set == "LEB" || card.Set == "2ED" || card.Set == "CED" {
-			args["Top"] = "59px"
-			args["Left"] = "60px"
+			cname.Top = "59px"
+			cname.Left = "60px"
 		} else if card.BorderColor == "white" || card.BorderColor == "gold" {
-			args["Top"] = "61px"
-			args["Left"] = "57px"
+			cname.Top = "61px"
+			cname.Left = "57px"
 		} else {
-			args["Top"] = "45px"
-			args["Left"] = "64px"
-			args["LetterSpacing"] = "0px"
+			cname.Top = "45px"
+			cname.Left = "64px"
+			cname.LetterSpacing = "0px"
 		}
-		args["FontSize"] = "43px"
+		cname.FontSize = "43px"
 	case scryfall.Frame1997:
-		args["FontFamily"] = "GoudyMedieval"
-		args["Top"] = "56px"
-		args["Left"] = "88px"
-		args["FontSize"] = "43px"
-		args["LetterSpacing"] = "0.2px"
+		cname.FontFamily = "GoudyMedieval"
+		cname.Top = "56px"
+		cname.Left = "88px"
+		cname.FontSize = "43px"
+		cname.LetterSpacing = "0.2px"
+
+		tline.FontFamily = "Palatino Linotype"
+		tline.Top = "585px"
+		tline.Left = "87px"
+		tline.FontSize = "34px"
+		tline.LetterSpacing = "-0.3px"
+
+		if set.ReleasedAt.Before(time.Date(1998, time.June, 14, 0, 0, 0, 0, time.UTC)) {
+			break
+		} else if set.Name == "PALP" || set.Name == "ATH" || set.Name == "PGRU" || set.Name == "BRB" || set.Name == "PSUS" || set.Name == "P00" {
+			// These sets don't have collector numbers, but were released after June 15, 1998
+			break
+		}
+
+		cnum.FontFamily = "MPlantin"
+		cnum.FontSize = "16px"
+		cnum.Top = "972px"
+		cnum.Left = "500px"
 	case scryfall.Frame2003:
-		args["FontFamily"] = "Matrix"
-		args["Top"] = "75px"
-		args["Left"] = "70px"
-		args["FontSize"] = "48px"
-		args["LetterSpacing"] = "-0.6px"
+		cname.FontFamily = "Matrix"
+		cname.Top = "75px"
+		cname.Left = "70px"
+		cname.FontSize = "48px"
+		cname.LetterSpacing = "-0.6px"
+		cname.PaddingBottom = 8
+
+		tline.FontFamily = "Matrix"
+		tline.Top = "610px"
+		tline.Left = "79px"
+		tline.FontSize = "38px"
+		tline.LetterSpacing = "-0.15px"
+
+		cnum.FontFamily = "MPlantin"
+		cnum.Top = "990px"
+		cnum.Left = "407px"
+		cnum.LetterSpacing = "0.25px"
+		cnum.FontSize = "17px"
 	case scryfall.Frame2015:
-		args["FontFamily"] = "Beleren"
-		args["Top"] = "66px"
-		args["Left"] = "72px"
-		args["FontSize"] = "40px"
-		args["LetterSpacing"] = "-0.3px"
+		cname.FontFamily = "Beleren"
+		cname.Top = "66px"
+		cname.Left = "72px"
+		cname.FontSize = "40px"
+		cname.LetterSpacing = "-0.3px"
+
+		tline.FontFamily = "Beleren"
+		tline.Top = "601px"
+		tline.Left = "69px"
+		tline.FontSize = "34px"
+		tline.LetterSpacing = "0px"
+
+		cnum.FontFamily = "Gotham Medium"
+		cnum.FontSize = "16px"
+		cnum.Top = "983px"
+		cnum.Left = "55px"
+		cnum.LetterSpacing = "3px"
+	}
+
+	args := map[string]interface{}{
+		"UUID":                  card.ID,
+		"URI":                   template.URL("data:image/png;base64," + base64.StdEncoding.EncodeToString(img)),
+		"CardName":              card.Name,
+		"TypeLine":              card.TypeLine,
+		"CollectorNumber":       card.CollectorNumber + "/" + strconv.Itoa(set.CardCount),
+		"Set":                   card.SetName,
+		"CardNameHelper":        cname,
+		"TypeLineHelper":        tline,
+		"CollectorNumberHelper": cnum,
+	}
+
+	if card.Frame == scryfall.Frame2015 {
+		colNumInt, err := strconv.Atoi(card.CollectorNumber)
+		if err == nil {
+			args["CollectorNumber"] = fmt.Sprintf("%03d", colNumInt) + "/" + strconv.Itoa(set.CardCount)
+		}
 	}
 
 	indexTemplate.ExecuteTemplate(w, "Document", args)
@@ -181,8 +269,13 @@ func handleDataIngest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	recentImagesMux.RLock()
 	err = ioutil.WriteFile(config.OutputLocation+lc.UUID+".png", recentImages[lc.UUID], 0644)
+	recentImagesMux.RUnlock()
+
+	recentImagesMux.Lock()
 	delete(recentImages, lc.UUID)
+	recentImagesMux.Unlock()
 	if err != nil {
 		loggedHTTPError(w, err.Error(), http.StatusInternalServerError)
 		return
