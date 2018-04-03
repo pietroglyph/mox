@@ -121,6 +121,43 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 		"CollectorNumber": card.CollectorNumber,
 		"Set":             card.SetName,
 	}
+
+	switch card.Frame {
+	case scryfall.Frame1993:
+		args["FontFamily"] = "GoudyMedieval"
+		args["LetterSpacing"] = "-0.6px"
+		if card.Set == "LEA" || card.Set == "LEB" || card.Set == "2ED" || card.Set == "CED" {
+			args["Top"] = "59px"
+			args["Left"] = "60px"
+		} else if card.BorderColor == "white" || card.BorderColor == "gold" {
+			args["Top"] = "61px"
+			args["Left"] = "57px"
+		} else {
+			args["Top"] = "45px"
+			args["Left"] = "64px"
+			args["LetterSpacing"] = "0px"
+		}
+		args["FontSize"] = "43px"
+	case scryfall.Frame1997:
+		args["FontFamily"] = "GoudyMedieval"
+		args["Top"] = "56px"
+		args["Left"] = "88px"
+		args["FontSize"] = "43px"
+		args["LetterSpacing"] = "0.2px"
+	case scryfall.Frame2003:
+		args["FontFamily"] = "Matrix"
+		args["Top"] = "75px"
+		args["Left"] = "70px"
+		args["FontSize"] = "48px"
+		args["LetterSpacing"] = "-0.6px"
+	case scryfall.Frame2015:
+		args["FontFamily"] = "Beleren"
+		args["Top"] = "66px"
+		args["Left"] = "72px"
+		args["FontSize"] = "40px"
+		args["LetterSpacing"] = "-0.3px"
+	}
+
 	indexTemplate.ExecuteTemplate(w, "Document", args)
 }
 

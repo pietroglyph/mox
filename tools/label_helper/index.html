@@ -24,14 +24,66 @@
 
       document.oncontextmenu = function() {return false;};
 
+      document.onkeydown = checkKey;
+
+      function checkKey(e) {
+          e = e || window.event;
+
+          let preventDefault = true;
+          let delta = {x: 0, y: 0};
+          if (e.code === "ArrowUp") {
+              delta.y = -1;
+          }
+          else if (e.code === "ArrowDown") {
+              delta.y = 1;
+          }
+          else if (e.code === "ArrowLeft") {
+             delta.x = -1;
+          }
+          else if (e.code === "ArrowRight") {
+             delta.x = 1;
+          } else {
+            preventDefault = false;
+          }
+
+          if (preventDefault) {
+            e.preventDefault();
+          }
+
+          var bb = boundingBoxes.get($("input[name=boundingBoxType]:checked", "#boundingBoxForm").val());
+          if (typeof(bb) === "undefined")
+          {
+            console.error("Couldn't get bouding boxes for selected radio button.");
+            return; // DOM probably isn't loaded yet?
+          }
+
+          if (e.ctrlKey || e.altKey) {
+            if (e.altKey) {
+              bb.deform(0, delta.x, delta.y, 0);
+            } else {
+              bb.deform(delta.x, 0, 0, delta.y);
+            }
+          } else {
+            bb.transform(delta.x, delta.y);
+          }
+
+          redrawCanvas(context, boundingBoxes);
+      }
+
+      let cn = $(".card-name");
+      var canvRect = canvas.getBoundingClientRect();
+      boundingBoxes.set(cn.data("key"),
+        new BoundingBox("pink", cn.position().left - canvRect.left, cn.position().top - canvRect.top, (cn.position().left - canvRect.left) + cn.width(),
+        (cn.position().top - canvRect.top) + cn.height()));
+
       redrawCanvas(context, boundingBoxes);
 
       $("#card").mousedown(function(event) {
         var radio = $("input[name=boundingBoxType]:checked", "#boundingBoxForm");
         if (event.button == 0) {
           var offset = $("#card").offset();
-          var rect = canvas.getBoundingClientRect();
-          boundingBoxes.set(radio.val(), new BoundingBox(radio.data("color"), event.clientX - rect.left, event.clientY - rect.top));
+          var canvRect = canvas.getBoundingClientRect();
+          boundingBoxes.set(radio.val(), new BoundingBox(radio.data("color"), event.clientX - canvRect.left, event.clientY - canvRect.top));
           drawing = true;
         } else if (event.button == 2) {
           let next = radio.next().next();
@@ -106,6 +158,20 @@
         }
       }
 
+      transform(x, y) {
+        this.startX += x;
+        this.endX += x;
+        this.startY += y;
+        this.endY += y;
+      }
+
+      deform(startX, endX, startY, endY) {
+        this.startX += startX;
+        this.endX += endX;
+        this.startY += startY;
+        this.endY += endY;
+      }
+
       round() {
         this.startX = Math.round(this.startX);
         this.startY = Math.round(this.startY);
@@ -145,9 +211,21 @@
       display: flex;
       flex-direction: row;
     }
+
+    .card-name {
+      margin: 0px;
+      position: absolute;
+      color: rgba(0, 0, 0, 0);
+      font-family: {{.FontFamily}};
+      font-size: {{.FontSize}};
+      letter-spacing: {{.LetterSpacing}};
+      top: {{.Top}};
+      left: {{.Left}};
+    }
   </style>
 </head>
 <body>
+  <p class="card-name" data-key="cardName">{{.CardName}}</p>
   <div class="container">
     <canvas id="card" width="745px" height="1040px"></canvas>
     <form id="boundingBoxForm">
