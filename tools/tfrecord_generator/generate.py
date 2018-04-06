@@ -1,255 +1,156 @@
+#!/bin/python3
 r"""Convert raw Magic: The Gathering data into a set of ".tfrecord" files.
 
 Example usage:
-    python create_coco_tf_record.py --logtostderr \
-      --train_image_dir="${TRAIN_IMAGE_DIR}" \
-      --val_image_dir="${VAL_IMAGE_DIR}" \
-      --test_image_dir="${TEST_IMAGE_DIR}" \
-      --train_annotations_file="${TRAIN_ANNOTATIONS_FILE}" \
-      --val_annotations_file="${VAL_ANNOTATIONS_FILE}" \
-      --testdev_annotations_file="${TESTDEV_ANNOTATIONS_FILE}" \
+    python generate.py --logtostderr \
+      --data_dir=${DATA_DIR} \
       --output_dir="${OUTPUT_DIR}"
 """
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import random
 import hashlib
 import io
 import json
 import os
+import glob
+import json
 import numpy as np
-import PIL.Image
 
-from pycocotools import mask
 import tensorflow as tf
 
+from PIL import Image, ImageEnhance
 from object_detection.utils import dataset_util
-from object_detection.utils import label_map_util
-
 
 flags = tf.app.flags
-tf.flags.DEFINE_string('train_image_dir', '',
+tf.flags.DEFINE_string('data_dir', './raw_data/',
                        'Training image directory.')
-tf.flags.DEFINE_string('val_image_dir', '',
-                       'Validation image directory.')
-tf.flags.DEFINE_string('test_image_dir', '',
-                       'Test image directory.')
-tf.flags.DEFINE_string('train_annotations_file', '',
-                       'Training annotations JSON file.')
-tf.flags.DEFINE_string('val_annotations_file', '',
-                       'Validation annotations JSON file.')
-tf.flags.DEFINE_string('testdev_annotations_file', '',
-                       'Test-dev annotations JSON file.')
 tf.flags.DEFINE_string('output_dir', '/tmp/', 'Output data directory.')
 
 FLAGS = flags.FLAGS
+UNDERFITTING_PIXELS = 20
+MAX_COLOR_BALANCE_DELTA = 0.3
+MAX_BRIGHTNESS_DELTA = 0.4
+TRAINING_SEGMENTS = 2
+BACKGROUND_NAME = "background.png"
 
 tf.logging.set_verbosity(tf.logging.INFO)
 
+def randomise_image(foreground_bytes, background_path):
+    im = Image.open(foreground_bytes)
+    bg = Image.open(background_path, mode="r")
 
-def create_tf_example(image,
-                      annotations_list,
-                      image_dir,
-                      category_index,
-                      include_masks=False):
-  """Converts image and annotations to a tf.Example proto.
+    oldsize = im.size
 
-  Args:
-    image: dict with keys:
-      [u'license', u'file_name', u'coco_url', u'height', u'width',
-      u'date_captured', u'flickr_url', u'id']
-    annotations_list:
-      list of dicts with keys:
-      [u'segmentation', u'area', u'iscrowd', u'image_id',
-      u'bbox', u'category_id', u'id']
-      Notice that bounding box coordinates in the official COCO dataset are
-      given as [x, y, width, height] tuples using absolute coordinates where
-      x, y represent the top-left (0-indexed) corner.  This function converts
-      to the format expected by the Tensorflow Object Detection API (which is
-      which is [ymin, xmin, ymax, xmax] with coordinates normalized relative
-      to image size).
-    image_dir: directory containing the image files.
-    category_index: a dict containing COCO category information keyed
-      by the 'id' field of each category.  See the
-      label_map_util.create_category_index function.
-    include_masks: Whether to include instance segmentations masks
-      (PNG encoded) in the result. default: False.
-  Returns:
-    example: The converted tf.Example
-    num_annotations_skipped: Number of (invalid) annotations that were ignored.
+    # Downscale
+    im.thumbnail((bg.size[0]-UNDERFITTING_PIXELS, bg.size[1]-UNDERFITTING_PIXELS), Image.LANCZOS)
 
-  Raises:
-    ValueError: if the image pointed to by data['filename'] is not a valid JPEG
-  """
-  image_height = image['height']
-  image_width = image['width']
-  filename = image['file_name']
-  image_id = image['id']
+    # Position the image randomly
+    margin_x = (bg.size[0]//2)-(im.size[0]//2)
+    margin_y = (bg.size[1]//2)-(im.size[1]//2)
+    transform_x = (random.choice([-1,1]) * random.randint(0,margin_x))
+    transform_y = (random.choice([-1,1]) * random.randint(0,margin_y))
+    bg.paste(im, (margin_x + transform_x,  margin_y + transform_y), im)
 
-  full_path = os.path.join(image_dir, filename)
-  with tf.gfile.GFile(full_path, 'rb') as fid:
-    encoded_jpg = fid.read()
-  encoded_jpg_io = io.BytesIO(encoded_jpg)
-  image = PIL.Image.open(encoded_jpg_io)
-  key = hashlib.sha256(encoded_jpg).hexdigest()
+    # Apply some random image enhancements (color balance, brightness, sharpness, contrast, etc.)
+    im = ImageEnhance.Color(im).enhance((random.random() * MAX_COLOR_BALANCE_DELTA * random.choice([-1,1])) + 1)
+    im = ImageEnhance.Brightness(im).enhance((random.random() * MAX_BRIGHTNESS_DELTA * random.choice([-1,1])) + 1)
 
-  xmin = []
-  xmax = []
-  ymin = []
-  ymax = []
-  is_crowd = []
-  category_names = []
-  category_ids = []
-  area = []
-  encoded_mask_png = []
-  num_annotations_skipped = 0
-  for object_annotations in annotations_list:
-    (x, y, width, height) = tuple(object_annotations['bbox'])
-    if width <= 0 or height <= 0:
-      num_annotations_skipped += 1
-      continue
-    if x + width > image_width or y + height > image_height:
-      num_annotations_skipped += 1
-      continue
-    xmin.append(float(x) / image_width)
-    xmax.append(float(x + width) / image_width)
-    ymin.append(float(y) / image_height)
-    ymax.append(float(y + height) / image_height)
-    is_crowd.append(object_annotations['iscrowd'])
-    category_id = int(object_annotations['category_id'])
-    category_ids.append(category_id)
-    category_names.append(category_index[category_id]['name'].encode('utf8'))
-    area.append(object_annotations['area'])
+    # bg.size should == (1024, 1024)
+    return bg, (transform_x, transform_y), (im.size[0]/oldsize[0], im.size[1]/oldsize[1])
 
-    if include_masks:
-      run_len_encoding = mask.frPyObjects(object_annotations['segmentation'],
-                                          image_height, image_width)
-      binary_mask = mask.decode(run_len_encoding)
-      if not object_annotations['iscrowd']:
-        binary_mask = np.amax(binary_mask, axis=2)
-      pil_image = PIL.Image.fromarray(binary_mask)
-      output_io = io.BytesIO()
-      pil_image.save(output_io, format='PNG')
-      encoded_mask_png.append(output_io.getvalue())
-  feature_dict = {
-      'image/height':
-          dataset_util.int64_feature(image_height),
-      'image/width':
-          dataset_util.int64_feature(image_width),
-      'image/filename':
-          dataset_util.bytes_feature(filename.encode('utf8')),
-      'image/source_id':
-          dataset_util.bytes_feature(str(image_id).encode('utf8')),
-      'image/key/sha256':
-          dataset_util.bytes_feature(key.encode('utf8')),
-      'image/encoded':
-          dataset_util.bytes_feature(encoded_jpg),
-      'image/format':
-          dataset_util.bytes_feature('jpeg'.encode('utf8')),
-      'image/object/bbox/xmin':
-          dataset_util.float_list_feature(xmin),
-      'image/object/bbox/xmax':
-          dataset_util.float_list_feature(xmax),
-      'image/object/bbox/ymin':
-          dataset_util.float_list_feature(ymin),
-      'image/object/bbox/ymax':
-          dataset_util.float_list_feature(ymax),
-      'image/object/class/label':
-          dataset_util.int64_list_feature(category_ids),
-      'image/object/is_crowd':
-          dataset_util.int64_list_feature(is_crowd),
-      'image/object/area':
-          dataset_util.float_list_feature(area),
-  }
-  if include_masks:
-    feature_dict['image/object/mask'] = (
-        dataset_util.bytes_list_feature(encoded_mask_png))
-  example = tf.train.Example(features=tf.train.Features(feature=feature_dict))
-  return key, example, num_annotations_skipped
+def create_tf_record_from_annotations(in_dir, in_ids, out_path):
+    background_png_path = os.path.join(in_dir, BACKGROUND_NAME)
+    writer = tf.python_io.TFRecordWriter(out_path)
 
+    for v in in_ids:
+        json_path = os.path.join(in_dir, v + ".json")
+        with tf.gfile.GFile(json_path, "r") as f:
+            json_raw = f.read()
+        annotation = json.loads(json_raw)
 
-def _create_tf_record_from_coco_annotations(
-    annotations_file, image_dir, output_path, include_masks):
-  """Loads COCO annotation json files and converts to tf.Record format.
+        card_png_path = os.path.join(in_dir, v + ".png")
+        print(card_png_path)
+        with tf.gfile.GFile(card_png_path, 'rb') as fid:
+            encoded_png = fid.read()
+        card_image, card_transform, card_resize_factor = randomise_image(io.BytesIO(encoded_png), background_png_path)
+        if card_image.format != "PNG":
+            raise ValueError("Image format not PNG")
 
-  Args:
-    annotations_file: JSON file containing bounding box annotations.
-    image_dir: Directory containing the image files.
-    output_path: Path to output tf.Record file.
-    include_masks: Whether to include instance segmentations masks
-      (PNG encoded) in the result. default: False.
-  """
-  with tf.gfile.GFile(annotations_file, 'r') as fid:
-    groundtruth_data = json.load(fid)
-    images = groundtruth_data['images']
-    category_index = label_map_util.create_category_index(
-        groundtruth_data['categories'])
+        annotation["card"] = {
+            "startX": 0,
+            "startY": 0,
+            "endX": card_image.size[0],
+            "endY": card_image.size[1],
+        }
 
-    annotations_index = {}
-    if 'annotations' in groundtruth_data:
-      tf.logging.info(
-          'Found groundtruth annotations. Building annotations index.')
-      for annotation in groundtruth_data['annotations']:
-        image_id = annotation['image_id']
-        if image_id not in annotations_index:
-          annotations_index[image_id] = []
-        annotations_index[image_id].append(annotation)
-    missing_annotation_count = 0
-    for image in images:
-      image_id = image['id']
-      if image_id not in annotations_index:
-        missing_annotation_count += 1
-        annotations_index[image_id] = []
-    tf.logging.info('%d images are missing annotations.',
-                    missing_annotation_count)
+        startx = []
+        starty = []
+        endx = []
+        endy = []
+        category_id = []
+        for k in annotation:
+            if k != "uuid":
+                startx.append((annotation[k]["startX"] * card_resize_factor[0]) + card_transform[0])
+                starty.append((annotation[k]["startY"] * card_resize_factor[1]) + card_transform[1])
+                endx.append((annotation[k]["endX"] * card_resize_factor[0]) + card_transform[0])
+                endy.append((annotation[k]["endY"] * card_resize_factor[1]) + card_transform[1])
+                category_id.append(category_name_to_id(k))
 
-    tf.logging.info('writing to output path: %s', output_path)
-    writer = tf.python_io.TFRecordWriter(output_path)
-    total_num_annotations_skipped = 0
-    for idx, image in enumerate(images):
-      if idx % 100 == 0:
-        tf.logging.info('On image %d of %d', idx, len(images))
-      annotations_list = annotations_index[image['id']]
-      _, tf_example, num_annotations_skipped = create_tf_example(
-          image, annotations_list, image_dir, category_index, include_masks)
-      total_num_annotations_skipped += num_annotations_skipped
-      writer.write(tf_example.SerializeToString())
+        example = tf.train.Example(features=tf.train.Features(feature={
+            "image/width": dataset_util.int64_feature(card_image.size[0]),
+            "image/height": dataset_util.int64_feature(card_image.size[1]),
+            "image/source_id": dataset_util.bytes_feature(
+                annotation["uuid"].encode("utf8")),
+            "image/encoded": dataset_util.bytes_feature(encoded_png),
+            "image/format": dataset_util.bytes_feature("png".encode("utf8")),
+            "image/object/bbox/startx": dataset_util.float_list_feature(startx),
+            "image/object/bbox/endx": dataset_util.float_list_feature(endx),
+            "image/object/bbox/starty": dataset_util.float_list_feature(starty),
+            "image/object/bbox/endy": dataset_util.float_list_feature(endy),
+            "image/object/class/label": dataset_util.int64_list_feature(category_id),
+        }))
+
+        writer.write(example.SerializeToString())
     writer.close()
-    tf.logging.info('Finished writing, skipped %d annotations.',
-                    total_num_annotations_skipped)
 
+
+
+def category_name_to_id(name):
+    return {
+        "cardName": 1,
+        "setSymbol": 2,
+        "collectorNumber": 3,
+        "typeLine": 4,
+        "card": 5
+    }[name]
 
 def main(_):
-  assert FLAGS.train_image_dir, '`train_image_dir` missing.'
-  assert FLAGS.val_image_dir, '`val_image_dir` missing.'
-  assert FLAGS.test_image_dir, '`test_image_dir` missing.'
-  assert FLAGS.train_annotations_file, '`train_annotations_file` missing.'
-  assert FLAGS.val_annotations_file, '`val_annotations_file` missing.'
-  assert FLAGS.testdev_annotations_file, '`testdev_annotations_file` missing.'
+    assert FLAGS.data_dir, '`data_dir` missing.'
+    assert FLAGS.output_dir, '`output_dir` missing.'
 
-  if not tf.gfile.IsDirectory(FLAGS.output_dir):
-    tf.gfile.MakeDirs(FLAGS.output_dir)
-  train_output_path = os.path.join(FLAGS.output_dir, 'coco_train.record')
-  val_output_path = os.path.join(FLAGS.output_dir, 'coco_val.record')
-  testdev_output_path = os.path.join(FLAGS.output_dir, 'coco_testdev.record')
+    if not tf.gfile.IsDirectory(FLAGS.output_dir):
+        tf.gfile.MakeDirs(FLAGS.output_dir)
+    train_output_path = os.path.join(FLAGS.output_dir, 'mtg_train.record')
+    val_output_path = os.path.join(FLAGS.output_dir, 'mtg_val.record')
+    # testdev_output_path = os.path.join(FLAGS.output_dir, 'coco_testdev.record')
 
-  _create_tf_record_from_coco_annotations(
-      FLAGS.train_annotations_file,
-      FLAGS.train_image_dir,
-      train_output_path,
-      FLAGS.include_masks)
-  _create_tf_record_from_coco_annotations(
-      FLAGS.val_annotations_file,
-      FLAGS.val_image_dir,
-      val_output_path,
-      FLAGS.include_masks)
-  _create_tf_record_from_coco_annotations(
-      FLAGS.testdev_annotations_file,
-      FLAGS.test_image_dir,
-      testdev_output_path,
-      FLAGS.include_masks)
+    files = glob.glob(FLAGS.data_dir+"*.json")
+    ids = [[], [], []]
+    files_added = 0
+    segment = 0
+    for i, v in enumerate(files):
+        if files_added > len(files) / TRAINING_SEGMENTS:
+            files_added = 0
+            segment += 1
+        ids[segment].append(files[i][len(FLAGS.data_dir):-5]) # strip the .json suffix to get the id
+        files_added += 1
 
+    create_tf_record_from_annotations(FLAGS.data_dir, ids[0], train_output_path)
+    create_tf_record_from_annotations(FLAGS.data_dir, ids[1], val_output_path)
+    # create_tf_record_from_annotations(FLAGS.data_dir, ids[2], testdev_output_path)
 
 if __name__ == '__main__':
-  tf.app.run()
+    tf.app.run()

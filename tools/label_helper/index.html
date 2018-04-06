@@ -29,8 +29,6 @@
       function checkKey(e) {
           e = e || window.event;
 
-          console.log(e);
-
           let preventDefault = true;
           let delta = {x: 0, y: 0};
           if (e.code === "ArrowUp") {
@@ -48,6 +46,8 @@
             nextRadio();
           } else if (e.code == "KeyS" && e.ctrlKey) {
             $("#save").click();
+          } else if (e.code == "KeyD" && e.ctrlKey) {
+            boundingBoxes.delete($("input[name=boundingBoxType]:checked", "#boundingBoxForm").val());
           } else {
             preventDefault = false;
           }
