@@ -97,10 +97,18 @@ def create_tf_record_from_annotations(in_dir, in_ids, out_path):
         for k in annotation:
             if k != "uuid":
                 # All coordinates are normalized here, too
-                startx.append(((annotation[k]["startX"] * card_resize_factor[0]) + card_transform[0]) / card_image.size[0])
-                starty.append(((annotation[k]["startY"] * card_resize_factor[1]) + card_transform[1]) / card_image.size[1])
-                endx.append(((annotation[k]["endX"] * card_resize_factor[0]) + card_transform[0]) / card_image.size[0])
-                endy.append(((annotation[k]["endY"] * card_resize_factor[1]) + card_transform[1]) / card_image.size[1])
+                c1 = (((annotation[k]["startX"] * card_resize_factor[0]) + card_transform[0]) / card_image.size[0], ((annotation[k]["startY"] * card_resize_factor[1]) + card_transform[1]) / card_image.size[1])
+                c2 = (((annotation[k]["endX"] * card_resize_factor[0]) + card_transform[0]) / card_image.size[0], ((annotation[k]["endY"] * card_resize_factor[1]) + card_transform[1]) / card_image.size[1])
+
+                if c1 > c2:
+                    c1, c2 = c2, c1 # Swap the variables
+                    print("Found disordered bounding box; it will be swapped.")
+
+                startx.append(c1[0])
+                starty.append(c1[1])
+                endx.append(c2[0])
+                endy.append(c2[1])
+
                 category_id.append(category_name_to_id(k))
                 category_name.append(k.encode("utf8"))
 
