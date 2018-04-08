@@ -12,3 +12,12 @@
 
 # Project-local glide cache, RE: https://github.com/Masterminds/glide/issues/736
 .glide/
+
+# TFRecords
+*.record
+
+# Tensorflow Checkpoints
+*.ckpt.*
+
+# The training directory
+models/text_localize_faster_rcnn/train/

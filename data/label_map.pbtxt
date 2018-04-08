@@ -1,24 +1,24 @@
 item {
   id: 1
-  name: 'Card Name'
+  name: 'cardName'
 }
 
 item {
   id: 2
-  name: 'Set Symbol'
+  name: 'setSymbol'
 }
 
 item {
   id: 3
-  name: 'Collector Number'
+  name: 'collectorNumber'
 }
 
 item {
   id: 4
-  name: 'Type Line'
+  name: 'typeLine'
 }
 
 item {
   id: 5
-  name: 'Card'
+  name: 'card'
 }

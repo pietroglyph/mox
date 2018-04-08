@@ -59,7 +59,7 @@ def randomise_image(foreground_bytes, background_path):
     im = ImageEnhance.Brightness(im).enhance((random.random() * MAX_BRIGHTNESS_DELTA * random.choice([-1,1])) + 1)
 
     # bg.size should == (1024, 1024)
-    return bg, (transform_x, transform_y), (im.size[0]/oldsize[0], im.size[1]/oldsize[1])
+    return bg, (transform_x + margin_x, transform_y + margin_y), (im.size[0]/oldsize[0], im.size[1]/oldsize[1]), oldsize
 
 def create_tf_record_from_annotations(in_dir, in_ids, out_path):
     background_png_path = os.path.join(in_dir, BACKGROUND_NAME)
@@ -71,19 +71,20 @@ def create_tf_record_from_annotations(in_dir, in_ids, out_path):
             json_raw = f.read()
         annotation = json.loads(json_raw)
 
-        card_png_path = os.path.join(in_dir, v + ".png")
+        filename = v + ".png"
+        card_png_path = os.path.join(in_dir, filename)
         print(card_png_path)
         with tf.gfile.GFile(card_png_path, 'rb') as fid:
             encoded_png = fid.read()
-        card_image, card_transform, card_resize_factor = randomise_image(io.BytesIO(encoded_png), background_png_path)
+        card_image, card_transform, card_resize_factor, original_size = randomise_image(io.BytesIO(encoded_png), background_png_path)
         if card_image.format != "PNG":
             raise ValueError("Image format not PNG")
 
         annotation["card"] = {
             "startX": 0,
             "startY": 0,
-            "endX": card_image.size[0],
-            "endY": card_image.size[1],
+            "endX": original_size[0],
+            "endY": original_size[1],
         }
 
         startx = []
@@ -91,25 +92,31 @@ def create_tf_record_from_annotations(in_dir, in_ids, out_path):
         endx = []
         endy = []
         category_id = []
+        category_name = []
+
         for k in annotation:
             if k != "uuid":
-                startx.append((annotation[k]["startX"] * card_resize_factor[0]) + card_transform[0])
-                starty.append((annotation[k]["startY"] * card_resize_factor[1]) + card_transform[1])
-                endx.append((annotation[k]["endX"] * card_resize_factor[0]) + card_transform[0])
-                endy.append((annotation[k]["endY"] * card_resize_factor[1]) + card_transform[1])
+                # All coordinates are normalized here, too
+                startx.append(((annotation[k]["startX"] * card_resize_factor[0]) + card_transform[0]) / card_image.size[0])
+                starty.append(((annotation[k]["startY"] * card_resize_factor[1]) + card_transform[1]) / card_image.size[1])
+                endx.append(((annotation[k]["endX"] * card_resize_factor[0]) + card_transform[0]) / card_image.size[0])
+                endy.append(((annotation[k]["endY"] * card_resize_factor[1]) + card_transform[1]) / card_image.size[1])
                 category_id.append(category_name_to_id(k))
+                category_name.append(k.encode("utf8"))
 
         example = tf.train.Example(features=tf.train.Features(feature={
             "image/width": dataset_util.int64_feature(card_image.size[0]),
             "image/height": dataset_util.int64_feature(card_image.size[1]),
+            "image/filename": dataset_util.bytes_feature(filename.encode("utf8")),
             "image/source_id": dataset_util.bytes_feature(
                 annotation["uuid"].encode("utf8")),
             "image/encoded": dataset_util.bytes_feature(encoded_png),
-            "image/format": dataset_util.bytes_feature("png".encode("utf8")),
-            "image/object/bbox/startx": dataset_util.float_list_feature(startx),
-            "image/object/bbox/endx": dataset_util.float_list_feature(endx),
-            "image/object/bbox/starty": dataset_util.float_list_feature(starty),
-            "image/object/bbox/endy": dataset_util.float_list_feature(endy),
+            "image/format": dataset_util.bytes_feature(b"png"),
+            "image/object/bbox/xmin": dataset_util.float_list_feature(startx),
+            "image/object/bbox/xmax": dataset_util.float_list_feature(endx),
+            "image/object/bbox/ymin": dataset_util.float_list_feature(starty),
+            "image/object/bbox/ymax": dataset_util.float_list_feature(endy),
+            "image/object/class/text": dataset_util.bytes_list_feature(category_name),
             "image/object/class/label": dataset_util.int64_list_feature(category_id),
         }))
 
