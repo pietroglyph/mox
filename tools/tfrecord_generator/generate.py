@@ -21,20 +21,22 @@ import numpy as np
 
 import tensorflow as tf
 
-from PIL import Image, ImageEnhance
+from PIL import Image, ImageEnhance, ImageDraw
 from object_detection.utils import dataset_util
 
 flags = tf.app.flags
 tf.flags.DEFINE_string('data_dir', './raw_data/',
                        'Training image directory.')
 tf.flags.DEFINE_string('output_dir', '/tmp/', 'Output data directory.')
+tf.flags.DEFINE_boolean('show_debug', False, 'Display a debug image with bounding boxes drawn.')
 
 FLAGS = flags.FLAGS
-UNDERFITTING_PIXELS = 20
+MAX_UNDERFITTING_PIXELS = 80
 MAX_COLOR_BALANCE_DELTA = 0.3
 MAX_BRIGHTNESS_DELTA = 0.4
 TRAINING_SEGMENTS = 2
 BACKGROUND_NAME = "background.png"
+PERCENT_EXTRA_TRAINING_DATA = 0.8
 
 tf.logging.set_verbosity(tf.logging.INFO)
 
@@ -45,7 +47,7 @@ def randomise_image(foreground_bytes, background_path):
     oldsize = im.size
 
     # Downscale
-    im.thumbnail((bg.size[0]-UNDERFITTING_PIXELS, bg.size[1]-UNDERFITTING_PIXELS), Image.LANCZOS)
+    im.thumbnail((bg.size[0]-random.randint(0, MAX_UNDERFITTING_PIXELS), bg.size[1]-random.randint(0, MAX_UNDERFITTING_PIXELS)), Image.LANCZOS)
 
     # Position the image randomly
     margin_x = (bg.size[0]//2)-(im.size[0]//2)
@@ -76,8 +78,8 @@ def create_tf_record_from_annotations(in_dir, in_ids, out_path):
         print(card_png_path)
         with tf.gfile.GFile(card_png_path, 'rb') as fid:
             encoded_png = fid.read()
-        card_image, card_transform, card_resize_factor, original_size = randomise_image(io.BytesIO(encoded_png), background_png_path)
-        if card_image.format != "PNG":
+        randomised_image, card_transform, card_resize_factor, original_size = randomise_image(io.BytesIO(encoded_png), background_png_path)
+        if randomised_image.format != "PNG":
             raise ValueError("Image format not PNG")
 
         annotation["card"] = {
@@ -94,15 +96,21 @@ def create_tf_record_from_annotations(in_dir, in_ids, out_path):
         category_id = []
         category_name = []
 
+        if FLAGS.show_debug:
+            debug_draw = ImageDraw.Draw(randomised_image)
+
         for k in annotation:
             if k != "uuid":
                 # All coordinates are normalized here, too
-                c1 = (((annotation[k]["startX"] * card_resize_factor[0]) + card_transform[0]) / card_image.size[0], ((annotation[k]["startY"] * card_resize_factor[1]) + card_transform[1]) / card_image.size[1])
-                c2 = (((annotation[k]["endX"] * card_resize_factor[0]) + card_transform[0]) / card_image.size[0], ((annotation[k]["endY"] * card_resize_factor[1]) + card_transform[1]) / card_image.size[1])
+                c1 = (((annotation[k]["startX"] * card_resize_factor[0]) + card_transform[0]) / randomised_image.size[0], ((annotation[k]["startY"] * card_resize_factor[1]) + card_transform[1]) / randomised_image.size[1])
+                c2 = (((annotation[k]["endX"] * card_resize_factor[0]) + card_transform[0]) / randomised_image.size[0], ((annotation[k]["endY"] * card_resize_factor[1]) + card_transform[1]) / randomised_image.size[1])
 
                 if c1 > c2:
                     c1, c2 = c2, c1 # Swap the variables
                     print("Found disordered bounding box; it will be swapped.")
+
+                if FLAGS.show_debug:
+                    debug_draw.rectangle([c1[0] * randomised_image.size[0], c1[1] * randomised_image.size[1], c2[0] * randomised_image.size[0], c2[1] * randomised_image.size[1]])
 
                 startx.append(c1[0])
                 starty.append(c1[1])
@@ -112,13 +120,23 @@ def create_tf_record_from_annotations(in_dir, in_ids, out_path):
                 category_id.append(category_name_to_id(k))
                 category_name.append(k.encode("utf8"))
 
+        if FLAGS.show_debug:
+            randomised_image.show()
+            raw_input("Press any key to show next image.")
+            continue
+
+        # This is wildly inefficient... I haven't found a better way to get this
+        # into a format TensorFlow wants.
+        randomised_image_bytes = io.BytesIO()
+        randomised_image.save(randomised_image_bytes, format="PNG")
+
         example = tf.train.Example(features=tf.train.Features(feature={
-            "image/width": dataset_util.int64_feature(card_image.size[0]),
-            "image/height": dataset_util.int64_feature(card_image.size[1]),
+            "image/width": dataset_util.int64_feature(randomised_image.size[0]),
+            "image/height": dataset_util.int64_feature(randomised_image.size[1]),
             "image/filename": dataset_util.bytes_feature(filename.encode("utf8")),
             "image/source_id": dataset_util.bytes_feature(
                 annotation["uuid"].encode("utf8")),
-            "image/encoded": dataset_util.bytes_feature(encoded_png),
+            "image/encoded": dataset_util.bytes_feature(randomised_image_bytes.getvalue()),
             "image/format": dataset_util.bytes_feature(b"png"),
             "image/object/bbox/xmin": dataset_util.float_list_feature(startx),
             "image/object/bbox/xmax": dataset_util.float_list_feature(endx),
@@ -156,12 +174,19 @@ def main(_):
     ids = [[], [], []]
     files_added = 0
     segment = 0
+    extra_data_added = False
     for i, v in enumerate(files):
         if files_added > len(files) / TRAINING_SEGMENTS:
-            files_added = 0
-            segment += 1
+            if segment == 0 and not extra_data_added:
+                extra_data_added = True
+                files_added -= (len(files) / TRAINING_SEGMENTS) * PERCENT_EXTRA_TRAINING_DATA
+            else:
+                files_added = 0
+                segment += 1
         ids[segment].append(files[i][len(FLAGS.data_dir):-5]) # strip the .json suffix to get the id
         files_added += 1
+
+    print("Using", len(ids[0]), "images for training, and", len(ids[1]), "for evaluation.")
 
     create_tf_record_from_annotations(FLAGS.data_dir, ids[0], train_output_path)
     create_tf_record_from_annotations(FLAGS.data_dir, ids[1], val_output_path)
