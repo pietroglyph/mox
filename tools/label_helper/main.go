@@ -111,6 +111,10 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				loggedHTTPError(w, err.Error(), http.StatusInternalServerError)
 				return
+			} else if r.URL.Query().Get("frame") != "" {
+				if r.URL.Query().Get("frame") == string(card.Frame) {
+					break
+				}
 			} else if card.Set != "PRM" && card.Set != "TD0" {
 				break
 			}

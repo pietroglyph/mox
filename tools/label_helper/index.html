@@ -48,6 +48,8 @@
             $("#save").click();
           } else if (e.code == "KeyD" && e.ctrlKey) {
             boundingBoxes.delete($("input[name=boundingBoxType]:checked", "#boundingBoxForm").val());
+            redrawCanvas(context, boundingBoxes);
+            return;
           } else {
             preventDefault = false;
           }
@@ -140,12 +142,20 @@
         obj.uuid = {{.UUID}};
         req.send(JSON.stringify(obj));
       	req.onreadystatechange = function() {
-      	    if (this.readyState == 4) document.location = "/"; // Removes custom multiverse id (also reloads page)
+            if (document.location.search.indexOf("?frame=") != 0) {
+      	       if (this.readyState == 4) document.location = "/"; // Removes custom multiverse id (also reloads page)
+            } else {
+              document.location = document.location;
+            }
       	}
       });
 
       $("#discard").click(function() {
-        document.location = "/"; // Removes custom multiverse id (also reloads page)
+        if (document.location.search.indexOf("?frame=") != 0) {
+           if (this.readyState == 4) document.location = "/"; // Removes custom multiverse id (also reloads page)
+        } else {
+          document.location = document.location;
+        }
       });
     };
 

@@ -36,7 +36,7 @@ MAX_COLOR_BALANCE_DELTA = 0.3
 MAX_BRIGHTNESS_DELTA = 0.4
 TRAINING_SEGMENTS = 2
 BACKGROUND_NAME = "background.png"
-PERCENT_EXTRA_TRAINING_DATA = 0.8
+NUM_EVAL_EXAMPLES = 10
 
 tf.logging.set_verbosity(tf.logging.INFO)
 
@@ -179,7 +179,7 @@ def main(_):
         if files_added > len(files) / TRAINING_SEGMENTS:
             if segment == 0 and not extra_data_added:
                 extra_data_added = True
-                files_added -= (len(files) / TRAINING_SEGMENTS) * PERCENT_EXTRA_TRAINING_DATA
+                files_added += (NUM_EVAL_EXAMPLES + 1) - (len(files) / TRAINING_SEGMENTS)
             else:
                 files_added = 0
                 segment += 1
