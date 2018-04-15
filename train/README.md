@@ -18,8 +18,10 @@ Although a pretrained inference graph is provided, you can train your own with a
 7. Export the inference graph:
   (Current directory must be `mox/data/`.)
   
-  ` $ python ../../tensorflow/models/research/object_detection/export_inference_graph.py     --input_type image_tensor     --pipeline_config_path ./models/text_localize_faster_rcnn/faster_rcnn_resnet101_mtg.config     --trained_checkpoint_prefix ./models/text_localize_faster_rcnn/train/model.ckpt-31613     --output_directory inference_graph`
+  ` $ python {PATH TO MODELS REPO}/research/object_detection/export_inference_graph.py     --input_type image_tensor     --pipeline_config_path ./models/text_localize_faster_rcnn/faster_rcnn_resnet101_mtg.config     --trained_checkpoint_prefix ./models/text_localize_faster_rcnn/train/model.ckpt-31613     --output_directory inference_graph`
+
 8. Replace the old inference graph:
+  
   (Current directory must be `mox/data`.)
   
   ` $ rm -rf ../inference_graph; mv ./inference_graph/ ../`
