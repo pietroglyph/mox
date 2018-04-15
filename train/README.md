@@ -16,9 +16,9 @@ Although a pretrained inference graph is provided, you can train your own with a
 
   This should run until you kill it. See [this](https://github.com/tensorflow/models/blob/master/research/object_detection/g3doc/running_locally.md) for more info, especially in regards to running Tensorboard and an evaluation job.
 7. Export the inference graph:
-  (Current directory must be `mox/data/`.)
+  (Current directory must be `mox/data/`. You must replace {LATEST CHECKPOINT NUMBER} with the number of the latest checkpoint.)
   
-  ` $ python {PATH TO MODELS REPO}/research/object_detection/export_inference_graph.py     --input_type image_tensor     --pipeline_config_path ./models/text_localize_faster_rcnn/faster_rcnn_resnet101_mtg.config     --trained_checkpoint_prefix ./models/text_localize_faster_rcnn/train/model.ckpt-31613     --output_directory inference_graph`
+  ` $ python {PATH TO MODELS REPO}/research/object_detection/export_inference_graph.py     --input_type image_tensor     --pipeline_config_path ./models/text_localize_faster_rcnn/faster_rcnn_resnet101_mtg.config     --trained_checkpoint_prefix ./models/text_localize_faster_rcnn/train/model.ckpt-{LATEST CHECKPOINT NUMBER}     --output_directory inference_graph`
 
 8. Replace the old inference graph:
   
