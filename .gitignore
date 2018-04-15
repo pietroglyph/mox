@@ -20,5 +20,5 @@
 *.ckpt.*
 
 # The training directory
-models/text_localize_faster_rcnn/train/*
-models/text_localize_faster_rcnn/eval/*
+train/models/text_localize_faster_rcnn/train/*
+train/models/text_localize_faster_rcnn/eval/*
