@@ -38,6 +38,7 @@ func main() {
 	// Create a Tesseract client to OCR the text
 	tessClient := gosseract.NewClient()
 	defer tessClient.Close()
+	tessClient.SetPageSegMode(gosseract.PSM_AUTO) // Set the segmentation mode
 
 	imageBytes, err := ioutil.ReadFile(config.ImageInputPath)
 	if err != nil {
@@ -49,5 +50,5 @@ func main() {
 		log.Panic(err)
 	}
 
-	log.Println(pcd)
+	log.Println(pcd.Name)
 }
