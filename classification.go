@@ -2,12 +2,15 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"image"
 	"image/jpeg"
 	"io/ioutil"
+	"regexp"
 
 	"github.com/oliamb/cutter"
 	"github.com/otiai10/gosseract"
+	scryfall "github.com/pietroglyph/go-scryfall"
 	tf "github.com/tensorflow/tensorflow/tensorflow/go"
 	"github.com/tensorflow/tensorflow/tensorflow/go/op"
 )
@@ -26,6 +29,20 @@ const (
 	typeLineIndex
 	cardIndex
 )
+
+var whitespaceStripper = regexp.MustCompile(`(?m)^\s*$[\r\n]*|[\r\n]+\s+\z`)
+
+func (d partialCardData) findClosestCard(ctx context.Context, client *scryfall.Client) (scryfall.Card, error) {
+	cardsList, err := client.SearchCards(ctx, d.Name, scryfall.SearchCardsOptions{
+		Unique:        scryfall.UniqueModePrint, // Show everything, including name duplicates
+		IncludeExtras: true,                     // Include tokens and things like that
+	})
+	if err != nil {
+		return scryfall.Card{}, err
+	}
+
+	return cardsList.Cards[0], nil
+}
 
 func inferPartialCardData(imageData []byte, session *tf.Session, graph *tf.Graph, tessClient *gosseract.Client) (partialCardData, error) {
 	tensor, err := makeTensorFromImage(imageData)
@@ -114,6 +131,8 @@ func inferPartialCardData(imageData []byte, session *tf.Session, graph *tf.Graph
 		if err != nil {
 			return partialCardData{}, err
 		}
+
+		text = whitespaceStripper.ReplaceAllString(text, "") // Remove blank lines
 
 		switch bestIndicies[i] {
 		case nameIndex:

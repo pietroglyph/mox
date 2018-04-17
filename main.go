@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"io/ioutil"
 	"log"
 	"path/filepath"
 
 	flag "github.com/ogier/pflag"
 	"github.com/otiai10/gosseract"
+	scryfall "github.com/pietroglyph/go-scryfall"
 	tf "github.com/tensorflow/tensorflow/tensorflow/go"
 )
 
@@ -16,6 +18,8 @@ type configuration struct {
 }
 
 func main() {
+	log.Println("Starting mox... Tesseract is version", gosseract.Version(), "(you probably want 4.x) and TensorFlow is version", tf.Version())
+
 	var config configuration
 
 	flag.StringVarP(&config.InferenceGraphPath, "inference-graph", "g", "./inference_graph/", "Path to the directory containing the inference graph.")
@@ -38,6 +42,7 @@ func main() {
 	// Create a Tesseract client to OCR the text
 	tessClient := gosseract.NewClient()
 	defer tessClient.Close()
+	tessClient.SetLanguage("eng")                 // Set the language to English (you may need to install this language for Tesseract)
 	tessClient.SetPageSegMode(gosseract.PSM_AUTO) // Set the segmentation mode
 
 	imageBytes, err := ioutil.ReadFile(config.ImageInputPath)
@@ -50,5 +55,16 @@ func main() {
 		log.Panic(err)
 	}
 
-	log.Println(pcd.Name)
+	context := context.Background()
+	scryfallClient, err := scryfall.NewClient()
+	if err != nil {
+		log.Panic(err)
+	}
+
+	card, err := pcd.findClosestCard(context, scryfallClient)
+	if err != nil {
+		log.Panic(err)
+	}
+
+	log.Println(card.Name)
 }
