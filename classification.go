@@ -3,14 +3,17 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"image"
 	"image/jpeg"
 	"io/ioutil"
 	"regexp"
 
+	scryfall "github.com/BlueMonday/go-scryfall"
+	"github.com/golang/freetype/truetype"
 	"github.com/oliamb/cutter"
 	"github.com/otiai10/gosseract"
-	scryfall "github.com/pietroglyph/go-scryfall"
+	"github.com/pietroglyph/phash"
 	tf "github.com/tensorflow/tensorflow/tensorflow/go"
 	"github.com/tensorflow/tensorflow/tensorflow/go/op"
 )
@@ -19,7 +22,7 @@ type partialCardData struct {
 	Name            string
 	TypeLine        string
 	CollectorNumber string
-	SetSymbol       *image.Image
+	SetSymbol       image.Image
 }
 
 const (
@@ -31,17 +34,40 @@ const (
 )
 
 var whitespaceStripper = regexp.MustCompile(`(?m)^\s*$[\r\n]*|[\r\n]+\s+\z`)
+var setSymbols map[string]image.Image
 
 func (d partialCardData) findClosestCard(ctx context.Context, client *scryfall.Client) (scryfall.Card, error) {
+	if d.Name == "" {
+		return scryfall.Card{}, nil
+	}
+
 	cardsList, err := client.SearchCards(ctx, d.Name, scryfall.SearchCardsOptions{
-		Unique:        scryfall.UniqueModePrint, // Show everything, including name duplicates
-		IncludeExtras: true,                     // Include tokens and things like that
+		Unique:        scryfall.UniqueModePrints, // Show everything, including name duplicates
+		IncludeExtras: true,                      // Include tokens and things like that
 	})
 	if err != nil {
 		return scryfall.Card{}, err
 	}
 
-	return cardsList.Cards[0], nil
+	setSymbolPhash := phash.GetHash(d.SetSymbol)
+
+	// Find the closest set symbol
+	var closestDistance int
+	var closestIndex int
+	for i, v := range cardsList.Cards {
+		refPhash := phash.GetHash(setSymbols[v.Set])
+		dist := phash.GetDistance(setSymbolPhash, refPhash)
+		if dist < closestDistance || i == 0 {
+			closestDistance = dist
+			closestIndex = i
+		}
+	}
+
+	return cardsList.Cards[closestIndex], nil
+}
+
+func (d partialCardData) String() string {
+	return fmt.Sprint("Name:", d.Name, "; TypeLine:", d.TypeLine, "; Collector Number:", d.CollectorNumber, "; Set Symbol Dimensions: ", d.SetSymbol.Bounds())
 }
 
 func inferPartialCardData(imageData []byte, session *tf.Session, graph *tf.Graph, tessClient *gosseract.Client) (partialCardData, error) {
@@ -116,7 +142,7 @@ func inferPartialCardData(imageData []byte, session *tf.Session, graph *tf.Graph
 		}
 
 		if bestIndicies[i] == setSymbolIndex {
-			inferredData.SetSymbol = &cropped
+			inferredData.SetSymbol = cropped
 			continue
 		}
 
@@ -201,4 +227,8 @@ func makeTensorFromImage(imageData []byte) (*tf.Tensor, error) {
 		return nil, err
 	}
 	return normalized[0], nil
+}
+
+func getSetSymbolImage(set string, font *truetype.Font) {
+
 }
