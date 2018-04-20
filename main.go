@@ -66,7 +66,7 @@ func main() {
 		img = imaging.AdjustFunc(img, func(c color.NRGBA) color.NRGBA {
 			_, _, _, a := c.RGBA()
 			if a == 0 {
-				return color.NRGBA{R: 255, G: 255, B: 255, A: 1}
+				return color.NRGBA{R: 255, G: 255, B: 255, A: 20}
 			}
 			return c
 		})
@@ -116,5 +116,5 @@ func main() {
 		log.Panic(err)
 	}
 
-	log.Println(pcd, card)
+	log.Println(card)
 }

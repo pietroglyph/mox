@@ -7,9 +7,13 @@ import (
 	"image"
 	"image/jpeg"
 	"io/ioutil"
+	"log"
+	"os"
 	"regexp"
+	"strconv"
 
 	scryfall "github.com/BlueMonday/go-scryfall"
+	"github.com/disintegration/imaging"
 	"github.com/golang/freetype/truetype"
 	"github.com/oliamb/cutter"
 	"github.com/otiai10/gosseract"
@@ -31,6 +35,13 @@ const (
 	collectorNumberIndex
 	typeLineIndex
 	cardIndex
+)
+
+const (
+	lowestAllowedBoundingBoxProbability = 0.4
+
+	minimumOCRWidth  = 1084
+	minimumOCRHeight = 131
 )
 
 var whitespaceStripper = regexp.MustCompile(`(?m)^\s*$[\r\n]*|[\r\n]+\s+\z`)
@@ -57,6 +68,7 @@ func (d partialCardData) findClosestCard(ctx context.Context, client *scryfall.C
 	for i, v := range cardsList.Cards {
 		refPhash := phash.GetHash(setSymbols[v.Set])
 		dist := phash.GetDistance(setSymbolPhash, refPhash)
+		log.Println(dist, v.Set)
 		if dist < closestDistance || i == 0 {
 			closestDistance = dist
 			closestIndex = i
@@ -105,8 +117,9 @@ func inferPartialCardData(imageData []byte, session *tf.Session, graph *tf.Graph
 	boxes := output[0].Value().([][][]float32)[0]
 
 	// Pick out the best bounding box of each class
-	highestProbabilities := make(map[int]float32)
-	bestIndicies := make(map[int]int) // The key is the class index, the value is the index for the outputs
+	// Both of these are maps so that we can
+	highestProbabilities := make(map[int]float32) // This is a map so that we can read empty keys
+	bestIndicies := make(map[int]int)             // The key is the class index, the value is the index for the outputs
 	for i := range probabilities {
 		if highestProbabilities[int(classes[i])] < probabilities[i] {
 			highestProbabilities[int(classes[i])] = probabilities[i]
@@ -122,7 +135,7 @@ func inferPartialCardData(imageData []byte, session *tf.Session, graph *tf.Graph
 
 	var inferredData partialCardData
 	for i := range highestProbabilities {
-		if bestIndicies[i] == cardIndex {
+		if i == cardIndex {
 			continue // Currently unused
 		}
 
@@ -131,19 +144,31 @@ func inferPartialCardData(imageData []byte, session *tf.Session, graph *tf.Graph
 		y1 := float32(img.Bounds().Max.Y) * boxes[bestIndicies[i]][0]
 		y2 := float32(img.Bounds().Max.Y) * boxes[bestIndicies[i]][2]
 
+		var padding int
+		if i == setSymbolIndex {
+			padding = 5
+		}
+
 		cropped, err := cutter.Crop(img, cutter.Config{
-			Width:  int(x2),
-			Height: int(y2),
-			Anchor: image.Point{X: int(x1), Y: int(y1)},
+			Width:  int(x2-x1) + padding,
+			Height: int(y2-y1) + padding,
+			Anchor: image.Point{X: int(x1) - padding, Y: int(y1) - padding},
 			Mode:   cutter.TopLeft, // We crop with the anchor at the top left
 		})
 		if err != nil {
 			return partialCardData{}, err
 		}
 
-		if bestIndicies[i] == setSymbolIndex {
+		if i == setSymbolIndex {
 			inferredData.SetSymbol = cropped
 			continue
+		}
+
+		if cropped.Bounds().Dx() < minimumOCRWidth {
+			cropped = imaging.Resize(cropped, minimumOCRWidth, 0, imaging.Lanczos)
+		}
+		if cropped.Bounds().Dy() < minimumOCRHeight {
+			cropped = imaging.Resize(cropped, 0, minimumOCRHeight, imaging.Lanczos)
 		}
 
 		buf := new(bytes.Buffer)
@@ -158,9 +183,12 @@ func inferPartialCardData(imageData []byte, session *tf.Session, graph *tf.Graph
 			return partialCardData{}, err
 		}
 
+		ioutil.WriteFile(strconv.Itoa(i), buf.Bytes(), os.ModePerm)
+		log.Println(i, text)
+
 		text = whitespaceStripper.ReplaceAllString(text, "") // Remove blank lines
 
-		switch bestIndicies[i] {
+		switch i {
 		case nameIndex:
 			inferredData.Name = text
 		case collectorNumberIndex:
