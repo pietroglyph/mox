@@ -8,9 +8,8 @@ import (
 	"image/jpeg"
 	"io/ioutil"
 	"log"
-	"os"
 	"regexp"
-	"strconv"
+	"strings"
 
 	scryfall "github.com/BlueMonday/go-scryfall"
 	"github.com/disintegration/imaging"
@@ -39,11 +38,14 @@ const (
 const (
 	lowestAllowedBoundingBoxProbability = 0.4
 
-	minimumOCRWidth  = 1084
-	minimumOCRHeight = 131
+	minimumOCRWidth  = 1500
+	minimumOCRHeight = 400
 )
 
-var whitespaceStripper = regexp.MustCompile(`(?m)^\s*$[\r\n]*|[\r\n]+\s+\z`)
+var (
+	whitespaceStripper        = regexp.MustCompile(`(?m)^\s*$[\r\n]*|[\r\n]+\s+\z`)
+	collectorNumberNormalizer = regexp.MustCompile(`^0+`)
+)
 
 func (d partialCardData) findClosestCard(ctx context.Context, client *scryfall.Client, setSymbols map[setSymbol]*deferredImage, setSymbolDir string) (scryfall.Card, error) {
 	if d.Name == "" {
@@ -64,14 +66,25 @@ func (d partialCardData) findClosestCard(ctx context.Context, client *scryfall.C
 	var closestDistance int
 	var closestIndex int
 	for i, v := range cardsList.Cards {
-		img, err := setSymbols[setSymbol{Set: v.Set, Rarity: v.Rarity}].getImage(setSymbolDir)
+		collectorNum := collectorNumberNormalizer.ReplaceAllString(strings.Split(d.CollectorNumber, "/")[0], "")
+		if v.CollectorNumber == collectorNum {
+			closestIndex = i
+			break
+		}
+
+		sym := setSymbols[setSymbol{Set: v.Set, Rarity: v.Rarity}]
+		if sym == nil {
+			continue
+		}
+
+		img, err := sym.getImage(setSymbolDir)
 		if err != nil {
 			return scryfall.Card{}, err
 		}
 
 		refPhash := phash.GetHash(img)
 		dist := phash.GetDistance(setSymbolPhash, refPhash)
-		log.Println(dist, v.Set)
+		log.Println(dist, setSymbol{Set: v.Set, Rarity: v.Rarity})
 		if dist < closestDistance || i == 0 {
 			closestDistance = dist
 			closestIndex = i
@@ -82,7 +95,14 @@ func (d partialCardData) findClosestCard(ctx context.Context, client *scryfall.C
 }
 
 func (d partialCardData) String() string {
-	return fmt.Sprint("Name:", d.Name, "; TypeLine:", d.TypeLine, "; Collector Number:", d.CollectorNumber, "; Set Symbol Dimensions: ", d.SetSymbol.Bounds())
+	var bound image.Rectangle
+	if d.SetSymbol == nil {
+		bound = image.Rectangle{}
+	} else {
+		bound = d.SetSymbol.Bounds()
+	}
+
+	return fmt.Sprint("Name:", d.Name, "; TypeLine:", d.TypeLine, "; Collector Number:", d.CollectorNumber, "; Set Symbol Dimensions: ", bound)
 }
 
 func inferCroppedSections(imageData []byte, session *tf.Session, graph *tf.Graph) ([]image.Image, []int, error) {
@@ -178,6 +198,11 @@ func inferPartialCardData(imageData []byte, session *tf.Session, graph *tf.Graph
 			continue // Currently unused
 		}
 
+		if classIndicies[i] == setSymbolIndex {
+			inferredData.SetSymbol = cropped
+			continue
+		}
+
 		if cropped.Bounds().Dx() < minimumOCRWidth {
 			cropped = imaging.Resize(cropped, minimumOCRWidth, 0, imaging.Lanczos)
 		}
@@ -197,12 +222,9 @@ func inferPartialCardData(imageData []byte, session *tf.Session, graph *tf.Graph
 			return partialCardData{}, err
 		}
 
-		ioutil.WriteFile(strconv.Itoa(i), buf.Bytes(), os.ModePerm)
-		log.Println(i, text)
-
 		text = whitespaceStripper.ReplaceAllString(text, "") // Remove blank lines
 
-		switch i {
+		switch classIndicies[i] {
 		case nameIndex:
 			inferredData.Name = text
 		case collectorNumberIndex:

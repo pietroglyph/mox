@@ -14,7 +14,10 @@ import (
 	"strings"
 	"time"
 
+	_ "image/png"
+
 	scryfall "github.com/BlueMonday/go-scryfall"
+	"github.com/disintegration/imaging"
 	tf "github.com/tensorflow/tensorflow/tensorflow/go"
 )
 
@@ -33,10 +36,22 @@ type deferredImage struct {
 const (
 	setSymbolFileExtension = ".jpg"
 	setSymbolFileSeparator = "-"
+
+	pastedImagePadding = 5 // In pixels
 )
 
-func setupSetSymbols(ctx context.Context, client *scryfall.Client, setSymbolsDir string, session *tf.Session, graph *tf.Graph) (map[setSymbol]*deferredImage, error) {
+func setupSetSymbols(ctx context.Context, client *scryfall.Client, setSymbolsDir string, backgroundPath string, session *tf.Session, graph *tf.Graph, getNew bool) (map[setSymbol]*deferredImage, error) {
 	ssFiles, err := ioutil.ReadDir(setSymbolsDir)
+	if err != nil {
+		return nil, err
+	}
+
+	bgReader, err := os.Open(backgroundPath)
+	if err != nil {
+		return nil, err
+	}
+
+	bg, _, err := image.Decode(bgReader)
 	if err != nil {
 		return nil, err
 	}
@@ -50,51 +65,10 @@ func setupSetSymbols(ctx context.Context, client *scryfall.Client, setSymbolsDir
 
 S:
 	for i := range sets {
-		cards, err := client.SearchCards(ctx, "e:"+sets[i].Code, scryfall.SearchCardsOptions{})
-		if err != nil {
-			return nil, err
-		}
-
-		code := sets[i].Code
-
-		var release *scryfall.Date
-		if sets[i].ReleasedAt == nil {
-			release = &scryfall.Date{Time: time.Now()}
-		} else {
-			release = sets[i].ReleasedAt
-		}
-
 		var foundCommon bool
 		var foundUncommon bool
 		var foundRare bool
 		var foundMythicRare bool
-		if code == "lea" || code == "leb" || code == "2ed" ||
-			code == "ced" || code == "cei" || code == "3ed" || code == "sum" ||
-			(cards.Cards[0].Frame == scryfall.Frame1993 && cards.Cards[0].BorderColor == "white") {
-			foundCommon = true
-			foundUncommon = true
-			foundRare = true
-			foundMythicRare = true
-		} else if cards.Cards[0].Frame == scryfall.Frame1993 ||
-			release.Before(time.Date(1998, 6, 14, 0, 0, 0, 0, time.UTC)) {
-			// Catches cards with the 1997 frame released before Exodus
-			foundCommon = false
-		} else if cards.Cards[0].Frame == scryfall.Frame1997 ||
-			release.Before(time.Date(2008, 10, 2, 0, 0, 0, 0, time.UTC)) {
-			// Catches cards with either the Exodus and later 1997 frame, or the 2003 frame before Shards of Alara
-			// Also catches cards with FrameFuture...
-			foundCommon = false
-			foundUncommon = false
-			foundRare = false
-		} else if cards.Cards[0].Frame == scryfall.Frame2003 ||
-			cards.Cards[0].Frame == scryfall.Frame2015 {
-			foundCommon = false
-			foundUncommon = false
-			foundRare = false
-			foundMythicRare = false // Also mythic rares
-		} else {
-			foundCommon = false
-		}
 
 		for _, v := range ssFiles {
 			ss, err := getSetSymbolFromFileName(v.Name())
@@ -114,6 +88,51 @@ S:
 			}
 
 			setsMap[ss] = &deferredImage{FileInfo: v}
+		}
+
+		if !getNew {
+			log.Println("Loaded set symbol for", sets[i].Name)
+			continue S
+		}
+
+		cards, err := client.SearchCards(ctx, "e:"+sets[i].Code, scryfall.SearchCardsOptions{})
+		if err != nil {
+			return nil, err
+		}
+
+		code := sets[i].Code
+
+		var release *scryfall.Date
+		if sets[i].ReleasedAt == nil {
+			release = &scryfall.Date{Time: time.Now()}
+		} else {
+			release = sets[i].ReleasedAt
+		}
+
+		if code == "lea" || code == "leb" || code == "2ed" ||
+			code == "ced" || code == "cei" || code == "3ed" || code == "sum" ||
+			(cards.Cards[0].Frame == scryfall.Frame1993 && cards.Cards[0].BorderColor == "white") {
+			foundCommon = true
+			foundUncommon = true
+			foundRare = true
+			foundMythicRare = true
+		} else if cards.Cards[0].Frame == scryfall.Frame1993 ||
+			release.Before(time.Date(1998, 6, 14, 0, 0, 0, 0, time.UTC)) {
+			// Catches cards with the 1997 frame released before Exodus
+			foundUncommon = true
+			foundRare = true
+			foundMythicRare = true
+		} else if cards.Cards[0].Frame == scryfall.Frame1997 ||
+			release.Before(time.Date(2008, 10, 2, 0, 0, 0, 0, time.UTC)) {
+			// Catches cards with either the Exodus and later 1997 frame, or the 2003 frame before Shards of Alara
+			// Also catches cards with FrameFuture...
+			foundMythicRare = true
+		} else if cards.Cards[0].Frame != scryfall.Frame2003 &&
+			cards.Cards[0].Frame != scryfall.Frame2015 {
+			// This is a fallback for everything else
+			foundUncommon = true
+			foundRare = true
+			foundMythicRare = true
 		}
 
 		for _, v := range cards.Cards {
@@ -145,17 +164,31 @@ S:
 				foundMythicRare = true
 			}
 
-			resp, err := http.Get(v.ImageURIs.Large)
+			if v.ImageURIs == nil {
+				log.Println("Couldn't find images for", v.ID)
+				continue
+			}
+
+			resp, err := http.Get(v.ImageURIs.PNG)
 			if err != nil {
 				return nil, err
 			}
 
-			body, err := ioutil.ReadAll(resp.Body)
+			img, _, err := image.Decode(resp.Body)
 			if err != nil {
 				return nil, err
 			}
 
-			crops, classIndicies, err := inferCroppedSections(body, session, graph)
+			// XXX: Assumes that the pasted card isn't too big!
+			img = imaging.Paste(bg, img, image.Point{X: pastedImagePadding, Y: pastedImagePadding})
+
+			buf := new(bytes.Buffer)
+			err = jpeg.Encode(buf, img, nil)
+			if err != nil {
+				return nil, err
+			}
+
+			crops, classIndicies, err := inferCroppedSections(buf.Bytes(), session, graph)
 			if err != nil {
 				return nil, err
 			}
@@ -168,7 +201,11 @@ S:
 				}
 			}
 
-			buf := new(bytes.Buffer)
+			if ssCrop == nil {
+				continue // We can't find what we want, try again with another card
+			}
+
+			buf = new(bytes.Buffer)
 			err = jpeg.Encode(buf, ssCrop, nil)
 			if err != nil {
 				return nil, err

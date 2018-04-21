@@ -6,8 +6,6 @@ import (
 	"log"
 	"path/filepath"
 
-	_ "image/png"
-
 	scryfall "github.com/BlueMonday/go-scryfall"
 	flag "github.com/ogier/pflag"
 	"github.com/otiai10/gosseract"
@@ -15,9 +13,11 @@ import (
 )
 
 type configuration struct {
-	InferenceGraphPath string
-	ImageInputPath     string
-	SetSymbolDirectory string
+	InferenceGraphPath      string
+	ImageInputPath          string
+	SetSymbolDirectory      string
+	SetSymbolBackgroundPath string
+	GetNewSetSymbols        bool
 }
 
 func main() {
@@ -28,6 +28,9 @@ func main() {
 	flag.StringVarP(&config.InferenceGraphPath, "inference-graph", "g", "./inference_graph/", "Path to the directory containing the inference graph.")
 	flag.StringVarP(&config.ImageInputPath, "image-input", "i", "./image.jpg", "Path to an image to infer partial card information from.")
 	flag.StringVarP(&config.SetSymbolDirectory, "setsymbol-dir", "s", "./set_symbols/", "A directory containing set symbols as PNGs.")
+	flag.StringVarP(&config.SetSymbolBackgroundPath, "set-symbol-background", "b", "./set_symbols/background.jpg",
+		"Path to the background to composite card images over when finding set symbols. THE BACKGROUND MUST BE LARGER THAN IMAGES LIKE THIS: https://img.scryfall.com/cards/png/en/ddt/60.png")
+	flag.BoolVar(&config.GetNewSetSymbols, "get-new-set-symbols", true, "If set to true, mox will get new set symbols from the internet and load them.")
 	flag.Parse()
 
 	// Construct the graph
@@ -51,7 +54,7 @@ func main() {
 	}
 
 	// Generate/get a list of set symbols
-	setSymbols, err := setupSetSymbols(context, scryfallClient, config.SetSymbolDirectory, session, graph)
+	setSymbols, err := setupSetSymbols(context, scryfallClient, config.SetSymbolDirectory, config.SetSymbolBackgroundPath, session, graph, config.GetNewSetSymbols)
 	if err != nil {
 		log.Panic(err)
 	}
@@ -72,7 +75,7 @@ func main() {
 		log.Panic(err)
 	}
 
-	log.Println(pcd)
+	log.Println(pcd.String())
 
 	card, err := pcd.findClosestCard(context, scryfallClient, setSymbols, config.SetSymbolDirectory)
 	if err != nil {
