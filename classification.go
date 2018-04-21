@@ -14,7 +14,6 @@ import (
 
 	scryfall "github.com/BlueMonday/go-scryfall"
 	"github.com/disintegration/imaging"
-	"github.com/golang/freetype/truetype"
 	"github.com/oliamb/cutter"
 	"github.com/otiai10/gosseract"
 	"github.com/pietroglyph/phash"
@@ -45,9 +44,8 @@ const (
 )
 
 var whitespaceStripper = regexp.MustCompile(`(?m)^\s*$[\r\n]*|[\r\n]+\s+\z`)
-var setSymbols map[string]image.Image
 
-func (d partialCardData) findClosestCard(ctx context.Context, client *scryfall.Client) (scryfall.Card, error) {
+func (d partialCardData) findClosestCard(ctx context.Context, client *scryfall.Client, setSymbols map[setSymbol]*deferredImage, setSymbolDir string) (scryfall.Card, error) {
 	if d.Name == "" {
 		return scryfall.Card{}, nil
 	}
@@ -66,7 +64,12 @@ func (d partialCardData) findClosestCard(ctx context.Context, client *scryfall.C
 	var closestDistance int
 	var closestIndex int
 	for i, v := range cardsList.Cards {
-		refPhash := phash.GetHash(setSymbols[v.Set])
+		img, err := setSymbols[setSymbol{Set: v.Set, Rarity: v.Rarity}].getImage(setSymbolDir)
+		if err != nil {
+			return scryfall.Card{}, err
+		}
+
+		refPhash := phash.GetHash(img)
 		dist := phash.GetDistance(setSymbolPhash, refPhash)
 		log.Println(dist, v.Set)
 		if dist < closestDistance || i == 0 {
@@ -82,10 +85,13 @@ func (d partialCardData) String() string {
 	return fmt.Sprint("Name:", d.Name, "; TypeLine:", d.TypeLine, "; Collector Number:", d.CollectorNumber, "; Set Symbol Dimensions: ", d.SetSymbol.Bounds())
 }
 
-func inferPartialCardData(imageData []byte, session *tf.Session, graph *tf.Graph, tessClient *gosseract.Client) (partialCardData, error) {
+func inferCroppedSections(imageData []byte, session *tf.Session, graph *tf.Graph) ([]image.Image, []int, error) {
+	var images []image.Image
+	var classIndicies []int
+
 	tensor, err := makeTensorFromImage(imageData)
 	if err != nil {
-		return partialCardData{}, err
+		return nil, nil, err
 	}
 
 	// Initialize input/output operations
@@ -108,7 +114,7 @@ func inferPartialCardData(imageData []byte, session *tf.Session, graph *tf.Graph
 		},
 		nil)
 	if err != nil {
-		return partialCardData{}, err
+		return nil, nil, err
 	}
 
 	// Actual outputs
@@ -121,7 +127,7 @@ func inferPartialCardData(imageData []byte, session *tf.Session, graph *tf.Graph
 	highestProbabilities := make(map[int]float32) // This is a map so that we can read empty keys
 	bestIndicies := make(map[int]int)             // The key is the class index, the value is the index for the outputs
 	for i := range probabilities {
-		if highestProbabilities[int(classes[i])] < probabilities[i] {
+		if highestProbabilities[int(classes[i])] < probabilities[i] && lowestAllowedBoundingBoxProbability <= probabilities[i] {
 			highestProbabilities[int(classes[i])] = probabilities[i]
 			bestIndicies[int(classes[i])] = i
 		}
@@ -130,10 +136,9 @@ func inferPartialCardData(imageData []byte, session *tf.Session, graph *tf.Graph
 	// Decode the image so we can manipulate it
 	img, _, err := image.Decode(bytes.NewReader(imageData))
 	if err != nil {
-		return partialCardData{}, err
+		return nil, nil, err
 	}
 
-	var inferredData partialCardData
 	for i := range highestProbabilities {
 		if i == cardIndex {
 			continue // Currently unused
@@ -156,12 +161,26 @@ func inferPartialCardData(imageData []byte, session *tf.Session, graph *tf.Graph
 			Mode:   cutter.TopLeft, // We crop with the anchor at the top left
 		})
 		if err != nil {
-			return partialCardData{}, err
+			return nil, nil, err
 		}
 
-		if i == setSymbolIndex {
-			inferredData.SetSymbol = cropped
-			continue
+		images = append(images, cropped)
+		classIndicies = append(classIndicies, i)
+	}
+
+	return images, classIndicies, nil
+}
+
+func inferPartialCardData(imageData []byte, session *tf.Session, graph *tf.Graph, tessClient *gosseract.Client) (partialCardData, error) {
+	crops, classIndicies, err := inferCroppedSections(imageData, session, graph)
+	if err != nil {
+		return partialCardData{}, err
+	}
+
+	var inferredData partialCardData
+	for i, cropped := range crops {
+		if classIndicies[i] == cardIndex {
+			continue // Currently unused
 		}
 
 		if cropped.Bounds().Dx() < minimumOCRWidth {
@@ -255,8 +274,4 @@ func makeTensorFromImage(imageData []byte) (*tf.Tensor, error) {
 		return nil, err
 	}
 	return normalized[0], nil
-}
-
-func getSetSymbolImage(set string, font *truetype.Font) {
-
 }
