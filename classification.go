@@ -149,15 +149,10 @@ func inferCroppedSections(imageData []byte, session *tf.Session, graph *tf.Graph
 		y1 := float32(img.Bounds().Max.Y) * boxes[bestIndicies[i]][0]
 		y2 := float32(img.Bounds().Max.Y) * boxes[bestIndicies[i]][2]
 
-		var padding int
-		if i == setSymbolIndex {
-			padding = 5
-		}
-
 		cropped, err := cutter.Crop(img, cutter.Config{
-			Width:  int(x2-x1) + padding,
-			Height: int(y2-y1) + padding,
-			Anchor: image.Point{X: int(x1) - padding, Y: int(y1) - padding},
+			Width:  int(x2 - x1),
+			Height: int(y2 - y1),
+			Anchor: image.Point{X: int(x1), Y: int(y1)},
 			Mode:   cutter.TopLeft, // We crop with the anchor at the top left
 		})
 		if err != nil {

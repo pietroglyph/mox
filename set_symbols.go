@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/jpeg"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -47,6 +48,7 @@ func setupSetSymbols(ctx context.Context, client *scryfall.Client, setSymbolsDir
 
 	setsMap := make(map[setSymbol]*deferredImage)
 
+S:
 	for i := range sets {
 		cards, err := client.SearchCards(ctx, "e:"+sets[i].Code, scryfall.SearchCardsOptions{})
 		if err != nil {
@@ -57,7 +59,7 @@ func setupSetSymbols(ctx context.Context, client *scryfall.Client, setSymbolsDir
 
 		var release *scryfall.Date
 		if sets[i].ReleasedAt == nil {
-			release = &scryfall.Date{Time: time.Date(1993, 8, 4, 0, 0, 0, 0, time.UTC)}
+			release = &scryfall.Date{Time: time.Now()}
 		} else {
 			release = sets[i].ReleasedAt
 		}
@@ -96,7 +98,7 @@ func setupSetSymbols(ctx context.Context, client *scryfall.Client, setSymbolsDir
 
 		for _, v := range ssFiles {
 			ss, err := getSetSymbolFromFileName(v.Name())
-			if err != nil {
+			if err != nil || ss.Set != sets[i].Code {
 				continue // This probably isn't the file we're looking for
 			}
 
@@ -116,17 +118,30 @@ func setupSetSymbols(ctx context.Context, client *scryfall.Client, setSymbolsDir
 
 		for _, v := range cards.Cards {
 			if foundCommon && foundUncommon && foundRare && foundMythicRare {
-				break
+				log.Println("Got new set symbols for", sets[i].Code, "("+sets[i].Name+").")
+				continue S
 			}
 
 			switch v.Rarity {
 			case "common":
+				if foundCommon {
+					continue
+				}
 				foundCommon = true
 			case "uncommon":
+				if foundUncommon {
+					continue
+				}
 				foundUncommon = true
 			case "rare":
+				if foundRare {
+					continue
+				}
 				foundRare = true
 			case "mythic":
+				if foundMythicRare {
+					continue
+				}
 				foundMythicRare = true
 			}
 
@@ -146,9 +161,9 @@ func setupSetSymbols(ctx context.Context, client *scryfall.Client, setSymbolsDir
 			}
 
 			var ssCrop image.Image
-			for i := range crops {
-				if classIndicies[i] == setSymbolIndex {
-					ssCrop = crops[i]
+			for ind := range crops {
+				if classIndicies[ind] == setSymbolIndex {
+					ssCrop = crops[ind]
 					break
 				}
 			}
