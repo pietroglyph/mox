@@ -47,6 +47,7 @@ func setupSetSymbols(ctx context.Context, client *scryfall.Client, setSymbolsDir
 	}
 
 	bgReader, err := os.Open(backgroundPath)
+	defer bgReader.Close()
 	if err != nil {
 		return nil, err
 	}
