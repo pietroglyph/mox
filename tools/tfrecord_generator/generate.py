@@ -21,7 +21,7 @@ import numpy as np
 
 import tensorflow as tf
 
-from PIL import Image, ImageEnhance, ImageDraw
+from PIL import Image, ImageEnhance, ImageDraw, ImageFilter
 from object_detection.utils import dataset_util
 
 flags = tf.app.flags
@@ -33,12 +33,13 @@ tf.flags.DEFINE_string('random_seed', '', 'Seed to supply to the random number g
 
 FLAGS = flags.FLAGS
 MAX_UNDERFITTING_PIXELS = 200
-MAX_COLOR_BALANCE_DELTA = 2
-MAX_BRIGHTNESS_DELTA = 2
+MAX_COLOR_BALANCE_DELTA = 0.3
+MAX_BRIGHTNESS_DELTA = 0.3
 TRAINING_SEGMENTS = 2
 BACKGROUND_NAMES = ["background1.png", "background2.png", "background3.png", "background4.png"]
 NUM_EVAL_EXAMPLES = 10
 MAX_ROTATION_DEGREES = 8
+MAX_BLUR_RADIUS = 1.3
 
 tf.logging.set_verbosity(tf.logging.INFO)
 
@@ -65,9 +66,14 @@ def randomise_image(foreground_bytes, background_path):
     transform = (random.randint(-margin[0],margin[0]), random.randint(-margin[1],margin[1]))
     bg.paste(im, tuple(margin+transform), im)
 
-    # Apply some random image enhancements (color balance, brightness, sharpness, contrast, etc.)
-    im = ImageEnhance.Color(im).enhance(random.uniform(-MAX_COLOR_BALANCE_DELTA, MAX_COLOR_BALANCE_DELTA) + 1)
-    im = ImageEnhance.Brightness(im).enhance(random.uniform(-MAX_BRIGHTNESS_DELTA, MAX_BRIGHTNESS_DELTA) + 1)
+    # Apply some random blur
+    bg = bg.filter(ImageFilter.GaussianBlur(radius=random.uniform(0, MAX_BLUR_RADIUS)))
+
+    # Apply some random bgage enhancements (color balance, brightness, sharpness, contrast, etc.)
+    bg = ImageEnhance.Color(bg).enhance(random.uniform(-MAX_COLOR_BALANCE_DELTA, MAX_COLOR_BALANCE_DELTA) + 1)
+    bg = ImageEnhance.Brightness(bg).enhance(random.uniform(-MAX_BRIGHTNESS_DELTA, MAX_BRIGHTNESS_DELTA) + 1)
+
+    bg.format = "PNG" # Hmm... Interesting.
 
     # bg.size should == (1024, 1024)
     return bg, tuple(margin+transform), after_thumbnail_size / origsize, origsize, rotation, (((np.array(bg.size)//2)-(np.array(after_thumbnail_size)//2))+transform)-(margin+transform)
