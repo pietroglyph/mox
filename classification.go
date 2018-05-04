@@ -9,15 +9,17 @@ import (
 	"io/ioutil"
 	"log"
 	"regexp"
+	"strconv"
 	"strings"
 
 	scryfall "github.com/BlueMonday/go-scryfall"
 	"github.com/disintegration/imaging"
 	"github.com/oliamb/cutter"
 	"github.com/otiai10/gosseract"
-	"github.com/pietroglyph/phash"
 	tf "github.com/tensorflow/tensorflow/tensorflow/go"
 	"github.com/tensorflow/tensorflow/tensorflow/go/op"
+	"gocv.io/x/gocv"
+	"gocv.io/x/gocv/contrib"
 )
 
 type partialCardData struct {
@@ -47,7 +49,7 @@ var (
 	collectorNumberNormalizer = regexp.MustCompile(`^0+`)
 )
 
-func (d partialCardData) findClosestCard(ctx context.Context, client *scryfall.Client, setSymbols map[setSymbol]*deferredImage, setSymbolDir string) (scryfall.Card, error) {
+func (d partialCardData) findClosestCard(ctx context.Context, client *scryfall.Client, surf contrib.SURF, setSymbols map[setSymbol]*deferredFile, setSymbolDir string) (scryfall.Card, error) {
 	if d.Name == "" {
 		return scryfall.Card{}, nil
 	}
@@ -60,10 +62,19 @@ func (d partialCardData) findClosestCard(ctx context.Context, client *scryfall.C
 		return scryfall.Card{}, err
 	}
 
-	setSymbolPhash := phash.GetHash(d.SetSymbol)
+	// Get the descriptors for generating SURF keypoints to compare
+	buf := new(bytes.Buffer)
+	err = jpeg.Encode(buf, d.SetSymbol, nil)
+	if err != nil {
+		return scryfall.Card{}, err
+	}
+
+	refMat := gocv.IMDecode(buf.Bytes(), gocv.IMReadGrayScale)
+	defer refMat.Close()
+	_, referenceDescriptors := surf.DetectAndCompute(refMat, gocv.NewMat())
 
 	// Find the closest set symbol
-	var closestDistance int
+	var closestDistance float64
 	var closestIndex int
 	for i, v := range cardsList.Cards {
 		collectorNum := collectorNumberNormalizer.ReplaceAllString(strings.Split(d.CollectorNumber, "/")[0], "")
@@ -77,15 +88,20 @@ func (d partialCardData) findClosestCard(ctx context.Context, client *scryfall.C
 			continue
 		}
 
-		img, err := sym.getImage(setSymbolDir)
+		buf, err := sym.getBytes(setSymbolDir)
 		if err != nil {
 			return scryfall.Card{}, err
 		}
 
-		refPhash := phash.GetHash(img)
-		dist := phash.GetDistance(setSymbolPhash, refPhash)
+		compMat := gocv.IMDecode(buf, gocv.IMReadGrayScale)
+		_, comparisonDescriptors := surf.DetectAndCompute(compMat, gocv.NewMat())
+
+		resizedRefDesc := gocv.NewMat()
+		gocv.Resize(referenceDescriptors, &resizedRefDesc, image.Point{X: comparisonDescriptors.Cols(), Y: comparisonDescriptors.Rows()}, 0, 0, gocv.InterpolationLanczos4)
+		dist := gocv.DifferenceNorm(resizedRefDesc, comparisonDescriptors, gocv.NormL2)
+
 		log.Println(dist, setSymbol{Set: v.Set, Rarity: v.Rarity})
-		if dist < closestDistance || i == 0 {
+		if dist > closestDistance || i == 0 {
 			closestDistance = dist
 			closestIndex = i
 		}
@@ -221,6 +237,8 @@ func inferPartialCardData(imageData []byte, session *tf.Session, graph *tf.Graph
 		if err != nil {
 			return partialCardData{}, err
 		}
+
+		ioutil.WriteFile(strconv.Itoa(classIndicies[i]), buf.Bytes(), 0644)
 
 		text = whitespaceStripper.ReplaceAllString(text, "") // Remove blank lines
 

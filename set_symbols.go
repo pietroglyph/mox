@@ -26,11 +26,11 @@ type setSymbol struct {
 	Rarity string
 }
 
-type deferredImage struct {
+type deferredFile struct {
 	FileInfo os.FileInfo
 
-	containsImage bool
-	image         image.Image // Could be empty
+	containsBytes bool
+	bytes         []byte
 }
 
 const (
@@ -40,7 +40,7 @@ const (
 	pastedImagePadding = 5 // In pixels
 )
 
-func setupSetSymbols(ctx context.Context, client *scryfall.Client, setSymbolsDir string, backgroundPath string, session *tf.Session, graph *tf.Graph, getNew bool) (map[setSymbol]*deferredImage, error) {
+func setupSetSymbols(ctx context.Context, client *scryfall.Client, setSymbolsDir string, backgroundPath string, session *tf.Session, graph *tf.Graph, getNew bool) (map[setSymbol]*deferredFile, error) {
 	ssFiles, err := ioutil.ReadDir(setSymbolsDir)
 	if err != nil {
 		return nil, err
@@ -61,7 +61,7 @@ func setupSetSymbols(ctx context.Context, client *scryfall.Client, setSymbolsDir
 		return nil, err
 	}
 
-	setsMap := make(map[setSymbol]*deferredImage)
+	setsMap := make(map[setSymbol]*deferredFile)
 
 S:
 	for i := range sets {
@@ -87,17 +87,17 @@ S:
 				foundMythicRare = true
 			}
 
-			setsMap[ss] = &deferredImage{FileInfo: v}
+			setsMap[ss] = &deferredFile{FileInfo: v}
 		}
 
-		if !getNew {
-			log.Println("Loaded set symbol for", sets[i].Name)
+		if !getNew || (foundCommon && foundUncommon && foundRare && foundMythicRare) {
 			continue S
 		}
 
 		cards, err := client.SearchCards(ctx, "e:"+sets[i].Code, scryfall.SearchCardsOptions{})
 		if err != nil {
-			return nil, err
+			log.Println("Couldn't find any cards for", sets[i].Code)
+			continue S
 		}
 
 		code := sets[i].Code
@@ -218,7 +218,7 @@ S:
 				return nil, err
 			}
 
-			setsMap[ss] = getDeferredImageFromImage(ssCrop)
+			setsMap[ss] = getDeferredBytes(buf.Bytes())
 		}
 	}
 
@@ -240,28 +240,22 @@ func (s setSymbol) fileName() string {
 	return s.Set + setSymbolFileSeparator + s.Rarity + setSymbolFileExtension
 }
 
-func getDeferredImageFromImage(img image.Image) *deferredImage {
-	return &deferredImage{containsImage: true, image: img}
+func getDeferredBytes(buf []byte) *deferredFile {
+	return &deferredFile{containsBytes: true, bytes: buf}
 }
 
-func (i *deferredImage) getImage(baseDir string) (image.Image, error) {
-	if i.containsImage {
-		return i.image, nil
+func (i *deferredFile) getBytes(baseDir string) ([]byte, error) {
+	if i.containsBytes {
+		return i.bytes, nil
 	}
 
-	bytes, err := os.Open(baseDir + i.FileInfo.Name())
-	defer bytes.Close()
+	buf, err := ioutil.ReadFile(filepath.Join(baseDir, i.FileInfo.Name()))
 	if err != nil {
 		return nil, err
 	}
 
-	img, _, err := image.Decode(bytes)
-	if err != nil {
-		return nil, err
-	}
+	i.bytes = buf
+	i.containsBytes = true
 
-	i.image = img
-	i.containsImage = true
-
-	return img, nil
+	return buf, nil
 }

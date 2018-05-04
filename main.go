@@ -10,6 +10,8 @@ import (
 	flag "github.com/ogier/pflag"
 	"github.com/otiai10/gosseract"
 	tf "github.com/tensorflow/tensorflow/tensorflow/go"
+	"gocv.io/x/gocv"
+	"gocv.io/x/gocv/contrib"
 )
 
 type configuration struct {
@@ -21,7 +23,10 @@ type configuration struct {
 }
 
 func main() {
-	log.Println("Starting mox... Tesseract is version", gosseract.Version(), "(you probably want 4.x) and TensorFlow is version", tf.Version())
+	log.Println(`Starting mox...
+		Tesseract is version`, gosseract.Version(), `(this should be 4.x).
+		TensorFlow is version`, tf.Version(), ` (this should be 1.x).
+		GoCV is version`, gocv.Version(), ` (who knows with this one).`)
 
 	var config configuration
 
@@ -30,7 +35,7 @@ func main() {
 	flag.StringVarP(&config.SetSymbolDirectory, "setsymbol-dir", "s", "./set_symbols/", "A directory containing set symbols as PNGs.")
 	flag.StringVarP(&config.SetSymbolBackgroundPath, "set-symbol-background", "b", "./set_symbols/background.jpg",
 		"Path to the background to composite card images over when finding set symbols. THE BACKGROUND MUST BE LARGER THAN IMAGES LIKE THIS: https://img.scryfall.com/cards/png/en/ddt/60.png")
-	flag.BoolVar(&config.GetNewSetSymbols, "get-new-set-symbols", true, "If set to true, mox will get new set symbols from the internet and load them.")
+	flag.BoolVar(&config.GetNewSetSymbols, "get-new-set-symbols", false, "If set to true, mox will get new set symbols from the internet and load them.")
 	flag.Parse()
 
 	// Construct the graph
@@ -65,6 +70,10 @@ func main() {
 	tessClient.SetLanguage("eng")                 // Set the language to English (you may need to install this language for Tesseract)
 	tessClient.SetPageSegMode(gosseract.PSM_AUTO) // Set the segmentation mode
 
+	// Setup a SURF context
+	surf := contrib.NewSURF()
+	defer surf.Close()
+
 	imageBytes, err := ioutil.ReadFile(config.ImageInputPath)
 	if err != nil {
 		log.Panic(err)
@@ -77,7 +86,7 @@ func main() {
 
 	log.Println(pcd.String())
 
-	card, err := pcd.findClosestCard(context, scryfallClient, setSymbols, config.SetSymbolDirectory)
+	card, err := pcd.findClosestCard(context, scryfallClient, surf, setSymbols, config.SetSymbolDirectory)
 	if err != nil {
 		log.Panic(err)
 	}
