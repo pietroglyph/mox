@@ -28,7 +28,7 @@ Although a pretrained inference graph is provided, you can train your own with a
 # Running the evaluation job
 Although the best way to evaluate the performance of the system is often to run it, you can visually verify the performance of the localizer using the following command:
 
-  (Current directory must be `mox/train/data`)
+  (Current directory must be `mox/`)
 
   ` $ python {PATH TO TENSORFLOW MODELS REPO}/research/object_detection/train.py     --logtostderr     --pipeline_config_path=./models/text_localize_faster_rcnn/faster_rcnn_resnet101_mtg.config     --checkpoint_dir=./models/text_localize_faster_rcnn/train/     --eval_dir=./models/text_localize_faster_rcnn/eval/`
 # Annotating more data
