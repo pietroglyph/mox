@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os/exec"
+	"runtime"
 	"sync"
 	"time"
 
@@ -32,7 +33,7 @@ type handler struct{}
 
 func (handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	cameraMux.Lock()
-	cmd := exec.Command("raspistill", "-o", "-", "-t", "1", "-n", "-e", "jpg")
+	cmd := exec.Command("raspistill", "-o", "-", "-t", "1", "-n")
 
 	stdout, err := cmd.StdoutPipe()
 	defer stdout.Close()
@@ -49,12 +50,12 @@ func (handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	go func() {
-		io.Copy(w, stdout) // raspistill doesn't ever return an EOF, so this is our nasty little hack around that
-	}()
+		if err := cmd.Wait(); err != nil {
+			http.Error(w, err.Error(), 500)
+		}
+		cameraMux.Unlock()
+		runtime.Goexit()
+	}() // raspistill doesn't ever return an EOF, so this is our nasty little hack around that
 
-	if err := cmd.Wait(); err != nil {
-		http.Error(w, err.Error(), 500)
-	}
-	log.Println("unlocking")
-	cameraMux.Unlock()
+	io.Copy(w, stdout)
 }
