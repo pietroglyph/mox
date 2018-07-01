@@ -251,6 +251,14 @@
       z-index: -1;
     }
 
+    .sidebar-item {
+      margin-left: 20px;
+      border-width: 1px;
+      border-style: solid;
+      height: 100%;
+      padding: 3px;
+    }
+
     .card-name {
       font-family: {{.CardNameHelper.FontFamily}};
       font-size: {{.CardNameHelper.FontSize}};
@@ -282,7 +290,7 @@
   <p class="collector-number helper" data-key="collectorNumber">{{.CollectorNumber}}</p>
   <div class="container">
     <canvas id="card" width="745px" height="1040px"></canvas>
-    <form id="boundingBoxForm">
+    <form id="boundingBoxForm" class="sidebar-item">
       Bounding Box Type:<br>
       <input type="radio" name="boundingBoxType" value="cardName" data-color="green" checked> Card Name ({{.CardName}})<br>
       <input type="radio" name="boundingBoxType" value="typeLine" data-color="pink"> Type Line ({{.TypeLine}})<br>
@@ -290,6 +298,39 @@
       <input type="radio" name="boundingBoxType" value="setSymbol" data-color="yellow"> Set Symbol ({{.Set}})<br>
       <i>All bounding boxes are optional.</i>
     </form>
+    <table class="sidebar-item">
+      <tr>
+        <td>Keyboard Shortcuts:</td>
+      </tr>
+      <tr>
+        <th>Action</th>
+        <th>Key(s)</th>
+      </tr>
+      <tr>
+        <td>Move Bounding Box</td>
+        <td>Arrow Keys</td>
+      </tr>
+      <tr>
+        <td>Move Top and/or Right Sides</td>
+        <td>Arrow Keys+Alt</td>
+      </tr>
+      <tr>
+        <td>Move Bottom and/or Left Sides</td>
+        <td>Arrow Keys+Ctrl</td>
+      </tr>
+      <tr>
+        <td>Next Bounding Box</td>
+        <td>n</td>
+      </tr>
+      <tr>
+        <td>Save Card</td>
+        <td>Ctrl+s</td>
+      </tr>
+      <tr>
+        <td>Delete Bounding Box</td>
+        <td>Ctrl+d</td>
+      </tr>
+    </table>
   </div>
   <button id="save">Save and Continue</button>
   <button id="discard">This Card is Unsuitable for Training</button>

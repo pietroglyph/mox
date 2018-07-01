@@ -2,13 +2,18 @@ package main
 
 import (
 	"context"
+	"crypto/sha1"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"html/template"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"net/http"
+	"net/url"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -18,9 +23,11 @@ import (
 )
 
 type configuration struct {
-	Bind           string
-	IndexLocation  string
-	OutputLocation string
+	Bind               string
+	IndexLocation      string
+	OutputLocation     string
+	LocalInputLocation string
+	HTTPInputLocation  string
 }
 
 type labelledCard struct {
@@ -50,16 +57,27 @@ type helperTextCSS struct {
 var (
 	config          configuration
 	indexTemplate   *template.Template
-	ctx             context.Context
-	client          *scryfall.Client
 	recentImages    map[string][]byte
 	recentImagesMux sync.RWMutex
+
+	// Scryfall mode only
+	ctx    context.Context
+	client *scryfall.Client
+
+	// Local mode only
+	localImages []string // No sync needed because this is read-only
+
+	cardProvider func(url.Values) (map[string]interface{}, error)
 )
+
+const localImageExtension = "png"
 
 func init() {
 	flag.StringVarP(&config.Bind, "bind", "b", "localhost:8000", "Host and port to bind the webserver to.")
-	flag.StringVarP(&config.IndexLocation, "index-location", "i", "./index.html", "Location of the file to serve on the webserver.")
+	flag.StringVar(&config.IndexLocation, "index-location", "./index.html", "Location of the file to serve on the webserver.")
 	flag.StringVarP(&config.OutputLocation, "output-location", "o", "./output/", "Location to output annotations and files.")
+	flag.StringVarP(&config.LocalInputLocation, "localinput-location", "l", "", "Location of .png files to use instead of Scryfall cards. If this is set, and 'httpinput-location' isn't set, then local inputs will be used.")
+	flag.StringVarP(&config.HTTPInputLocation, "httpinput-location", "h", "", "URL of a webserver that servers .png files instead of Scryfall cards. If this is set, even if 'httpinput-location' is set, then an HTTP input will be used.")
 }
 
 func main() {
@@ -75,10 +93,25 @@ func main() {
 		log.Panic(err)
 	}
 
-	ctx = context.Background()
-	client, err = scryfall.NewClient()
-	if err != nil {
-		log.Fatal(err)
+	if config.HTTPInputLocation != "" {
+		cardProvider = getHTTPCard
+	} else if config.LocalInputLocation != "" {
+		cardProvider = getRandomLocalCard
+
+		localImages, err = filepath.Glob(filepath.Join(config.LocalInputLocation, "*."+localImageExtension))
+		if err != nil {
+			log.Panic(err)
+		} else if len(localImages) == 0 {
+			log.Panic("Couldn't find any local images in provided directory.")
+		}
+	} else {
+		cardProvider = getRandomScryfallCard
+
+		ctx = context.Background()
+		client, err = scryfall.NewClient()
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 
 	recentImages = make(map[string][]byte)
@@ -92,27 +125,126 @@ func main() {
 
 func handleIndex(w http.ResponseWriter, r *http.Request) {
 	var err error
+
+	var args map[string]interface{}
+
+	args, err = cardProvider(r.URL.Query())
+	if err != nil {
+		loggedHTTPError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	indexTemplate.ExecuteTemplate(w, "Document", args)
+}
+
+func handleDataIngest(w http.ResponseWriter, r *http.Request) {
+	b, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		loggedHTTPError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	lc := &labelledCard{}
+	err = json.Unmarshal(b, lc)
+	if err != nil {
+		loggedHTTPError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	err = ioutil.WriteFile(config.OutputLocation+lc.UUID+".json", b, 0644)
+	if err != nil {
+		loggedHTTPError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	recentImagesMux.RLock()
+	err = ioutil.WriteFile(config.OutputLocation+lc.UUID+".png", recentImages[lc.UUID], 0644)
+	recentImagesMux.RUnlock()
+
+	recentImagesMux.Lock()
+	delete(recentImages, lc.UUID)
+	recentImagesMux.Unlock()
+	if err != nil {
+		loggedHTTPError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+}
+
+func imageBytesToCard(b *[]byte, suffix string) map[string]interface{} {
+	bSum := sha1.Sum(*b)
+	uuid := hex.EncodeToString(bSum[:]) + "." + suffix
+
+	recentImagesMux.Lock()
+	recentImages[uuid] = *b
+	recentImagesMux.Unlock()
+
+	return map[string]interface{}{
+		"UUID":                  uuid,
+		"URI":                   template.URL("data:image/png;base64," + base64.StdEncoding.EncodeToString(*b)),
+		"CardName":              "Unknown Card",
+		"TypeLine":              "Unknown Type Line",
+		"CollectorNumber":       "Unknown Collector Number",
+		"Set":                   "Unknown Set",
+		"CardNameHelper":        helperTextCSS{},
+		"TypeLineHelper":        helperTextCSS{},
+		"CollectorNumberHelper": helperTextCSS{},
+	}
+}
+
+func getHTTPCard(_ url.Values) (map[string]interface{}, error) {
+	resp, err := http.Get(config.HTTPInputLocation)
+	if err != nil {
+		return nil, err
+	}
+
+	b, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	return imageBytesToCard(&b, "http"), nil
+}
+
+func getRandomLocalCard(query url.Values) (map[string]interface{}, error) {
+	pathFromQuery := query.Get("path")
+
+	var imgPath string
+	if pathFromQuery == "" {
+		randomImgIdx := rand.Intn(len(localImages))
+		imgPath = localImages[randomImgIdx]
+		log.Println(len(localImages), randomImgIdx, localImages[randomImgIdx])
+	} else {
+		imgPath = pathFromQuery
+	}
+
+	b, err := ioutil.ReadFile(imgPath)
+	if err != nil {
+		return nil, err
+	}
+
+	return imageBytesToCard(&b, "local"), nil
+}
+
+func getRandomScryfallCard(query url.Values) (map[string]interface{}, error) {
+	var err error
 	var card scryfall.Card
-	if r.URL.Query().Get("multiverseid") != "" {
+	if query.Get("multiverseid") != "" {
 		var id int
-		id, err = strconv.Atoi(r.URL.Query().Get("multiverseid"))
+		id, err = strconv.Atoi(query.Get("multiverseid"))
 		if err != nil {
-			loggedHTTPError(w, err.Error(), http.StatusBadRequest)
-			return
+			return nil, err
 		}
 		card, err = client.GetCardByMultiverseID(ctx, id)
 		if err != nil {
-			loggedHTTPError(w, err.Error(), http.StatusBadRequest)
-			return
+			return nil, err
 		}
 	} else {
 		for {
 			card, err = client.GetRandomCard(ctx)
 			if err != nil {
-				loggedHTTPError(w, err.Error(), http.StatusInternalServerError)
-				return
-			} else if r.URL.Query().Get("frame") != "" {
-				if r.URL.Query().Get("frame") == string(card.Frame) {
+				return nil, err
+			} else if query.Get("frame") != "" {
+				if query.Get("frame") == string(card.Frame) {
 					break
 				}
 			} else if card.Set != "PRM" && card.Set != "TD0" {
@@ -123,18 +255,16 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 
 	imgResp, err := http.Get(card.ImageURIs.PNG) // This way we only get the image once
 	if err != nil {
-		loggedHTTPError(w, err.Error(), http.StatusInternalServerError)
-		return
+		return nil, err
 	}
 	img, err := ioutil.ReadAll(imgResp.Body)
 	if err != nil {
-		loggedHTTPError(w, err.Error(), http.StatusInternalServerError)
-		return
+		return nil, err
 	}
 
 	set, err := client.GetSet(ctx, card.Set)
 	if err != nil {
-		loggedHTTPError(w, err.Error(), http.StatusInternalServerError)
+		return nil, err
 	}
 
 	recentImagesMux.Lock()
@@ -231,59 +361,25 @@ func handleIndex(w http.ResponseWriter, r *http.Request) {
 		cnum.LetterSpacing = "3px"
 	}
 
-	args := map[string]interface{}{
+	var colNum string = card.CollectorNumber + "/" + strconv.Itoa(set.CardCount)
+	if card.Frame == scryfall.Frame2015 {
+		colNumInt, err := strconv.Atoi(card.CollectorNumber)
+		if err == nil {
+			colNum = fmt.Sprintf("%03d", colNumInt) + "/" + strconv.Itoa(set.CardCount)
+		}
+	}
+
+	return map[string]interface{}{
 		"UUID":                  card.ID,
 		"URI":                   template.URL("data:image/png;base64," + base64.StdEncoding.EncodeToString(img)),
 		"CardName":              card.Name,
 		"TypeLine":              card.TypeLine,
-		"CollectorNumber":       card.CollectorNumber + "/" + strconv.Itoa(set.CardCount),
+		"CollectorNumber":       colNum,
 		"Set":                   card.SetName,
 		"CardNameHelper":        cname,
 		"TypeLineHelper":        tline,
 		"CollectorNumberHelper": cnum,
-	}
-
-	if card.Frame == scryfall.Frame2015 {
-		colNumInt, err := strconv.Atoi(card.CollectorNumber)
-		if err == nil {
-			args["CollectorNumber"] = fmt.Sprintf("%03d", colNumInt) + "/" + strconv.Itoa(set.CardCount)
-		}
-	}
-
-	indexTemplate.ExecuteTemplate(w, "Document", args)
-}
-
-func handleDataIngest(w http.ResponseWriter, r *http.Request) {
-	b, err := ioutil.ReadAll(r.Body)
-	if err != nil {
-		loggedHTTPError(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	lc := &labelledCard{}
-	err = json.Unmarshal(b, lc)
-	if err != nil {
-		loggedHTTPError(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	err = ioutil.WriteFile(config.OutputLocation+lc.UUID+".json", b, 0644)
-	if err != nil {
-		loggedHTTPError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	recentImagesMux.RLock()
-	err = ioutil.WriteFile(config.OutputLocation+lc.UUID+".png", recentImages[lc.UUID], 0644)
-	recentImagesMux.RUnlock()
-
-	recentImagesMux.Lock()
-	delete(recentImages, lc.UUID)
-	recentImagesMux.Unlock()
-	if err != nil {
-		loggedHTTPError(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	}, nil
 }
 
 func loggedHTTPError(w http.ResponseWriter, e string, code int) {
