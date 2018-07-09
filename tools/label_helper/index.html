@@ -15,8 +15,15 @@
     var drawing = false;
 
     window.onload = function() {
-      canvas = $("#card")[0];
+      canvasElement = $("#card");
+      canvas = canvasElement[0];
       context = canvas.getContext("2d");
+
+      canvas.scaleCoordinates = function(x, y) {
+        let xScaleFactor = this.width / canvasElement.width();
+        let yScaleFactor = this.height / canvasElement.height();
+        return {x: x*xScaleFactor, y: y*yScaleFactor};
+      };
 
       context.lineWidth = 1;
       context.fillStyle = RECT_FILL_STYLE;
@@ -83,7 +90,7 @@
         let cn = $(".card-name");
         boundingBoxes.set(cn.data("key"),
           new BoundingBox("green", cn.position().left - canvRect.left, cn.position().top - canvRect.top, (cn.position().left - canvRect.left) + cn.width(),
-          (cn.position().top - canvRect.top) + cn.height() + {{.CardNameHelper.PaddingBottom}}));
+          (cn.position().top - canvRect.top) + cn.height() + {{.CardNameHelper.PaddingBottom}})); // Don't repeat yourself :(
       }
       if ({{.TypeLineHelper.FontFamily}} !== "") {
         let tl = $(".type-line");
@@ -103,9 +110,10 @@
       $("#card").mousedown(function(event) {
         if (event.button == 0) {
           let radio = $("input[name=boundingBoxType]:checked", "#boundingBoxForm");
-          var offset = $("#card").offset();
-          var canvRect = canvas.getBoundingClientRect();
-          boundingBoxes.set(radio.val(), new BoundingBox(radio.data("color"), event.clientX - canvRect.left, event.clientY - canvRect.top));
+          let offset = $("#card").offset();
+          let canvRect = canvas.getBoundingClientRect();
+          let scaledCoords = canvas.scaleCoordinates(event.clientX - canvRect.left, event.clientY - canvRect.top);
+          boundingBoxes.set(radio.val(), new BoundingBox(radio.data("color"), scaledCoords.x, scaledCoords.y));
           drawing = true;
         } else if (event.button == 2) {
           nextRadio();
@@ -114,12 +122,14 @@
         drawing = false;
       }).mousemove(function(event) {
         if (drawing) {
-          var rect = canvas.getBoundingClientRect();
-          var radioName = $("input[name=boundingBoxType]:checked", "#boundingBoxForm").val();
+          let rect = canvas.getBoundingClientRect();
+          let radioName = $("input[name=boundingBoxType]:checked", "#boundingBoxForm").val();
 
-          var bb = boundingBoxes.get(radioName);
-          bb.endX = event.clientX - rect.left;
-          bb.endY = event.clientY - rect.top;
+          let endCoords = canvas.scaleCoordinates(event.clientX - rect.left, event.clientY - rect.top);
+          let bb = boundingBoxes.get(radioName);
+          bb.endX = endCoords.x;
+          bb.endY = endCoords.y;
+          console.log(bb);
           boundingBoxes.set(radioName, bb);
 
           redrawCanvas(context, boundingBoxes);
@@ -157,11 +167,20 @@
           document.location = document.location;
         }
       });
+
+      // $("body").css("width", $("#cardImage")[0].width * 2.5 + "px");
     };
 
     function redrawCanvas(ctx, bbs) {
+      let cardImage = $("#cardImage")[0];
+
+      canvas.width = cardImage.width;
+      canvas.height = cardImage.height;
+
+      // Changing canvas size clears the canvas, but we'll be defensive anyway
       context.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage($("#cardImage")[0], 0, 0);
+
+      ctx.drawImage(cardImage, 0, 0);
 
       bbs.forEach(function(v, k) {
         v.draw(context, k);
@@ -334,7 +353,7 @@
   </div>
   <button id="save">Save and Continue</button>
   <button id="discard">This Card is Unsuitable for Training</button>
-  <img id="cardImage" src="{{.URI}}" alt="Card Preview" style="display: none;" width="745px" height="1040px"></img>
+  <img id="cardImage" src="{{.URI}}" alt="Card Preview" style="display: none;"></img>
 </body>
 </html>
 {{end}}

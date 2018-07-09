@@ -65,7 +65,7 @@ var (
 	client *scryfall.Client
 
 	// Local mode only
-	localImages []string // No sync needed because this is read-only
+	localImages []string // No locking needed because this is read-only
 
 	cardProvider func(url.Values) (map[string]interface{}, error)
 )
