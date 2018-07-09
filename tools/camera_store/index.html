@@ -1,0 +1,207 @@
+<html>
+	<head>
+		<title>Mox Camera Capture</title>
+		<meta charset="utf-8" />
+	</head>
+	<body>
+		<script>
+(function() {
+  var width = 1920;
+  var height = 0; // Keep the aspect ratio
+
+  var streaming = false;
+
+  // Set in startup
+  var video = null;
+  var canvas = null;
+  var photo = null;
+  var startbutton = null;
+
+  function startup() {
+    video = document.querySelector("#video");
+    canvas = document.querySelector("#canvas");
+    startbutton = document.querySelector("#startbutton");
+		// Check if MediaDevice is implemented
+		if (navigator.mediaDevices === undefined) {
+		  navigator.mediaDevices = {};
+		}
+
+		// For partial support of MediaDevices
+		if (navigator.mediaDevices.getUserMedia === undefined) {
+		  navigator.mediaDevices.getUserMedia = function(constraints) {
+		    var getUserMedia = navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
+
+		    // Completely unimplemented
+		    if (!getUserMedia) {
+		      return Promise.reject(new Error("getUserMedia is not implemented in this browser"));
+		    }
+
+		    // If getUserMedia support
+		    return new Promise(function(resolve, reject) {
+		      getUserMedia.call(navigator, constraints, resolve, reject);
+		    });
+		  }
+		}
+
+		navigator.mediaDevices.getUserMedia({ audio: false, video: true })
+		.then(function(stream) {
+		  let video = document.querySelector("#video");
+		  // Older browsers may not have srcObject
+		  if ("srcObject" in video) {
+		    video.srcObject = stream;
+		  } else {
+		    // Avoid using this in new browsers, as it is going away.
+		    video.src = window.URL.createObjectURL(stream);
+		  }
+		  video.onloadedmetadata = function(e) {
+		    video.play();
+		  };
+		}).catch(function(err) {
+		  console.warn("Couldn't open UserMedia; " + err.name + ": " + err.message);
+
+			// Try providing an image picker as a fallback
+			document.querySelector("#video").style.display = "none";
+			document.querySelector("#startbutton").style.display = "none";
+
+			let vidPicker = document.createElement("input");
+			let statusIndicator = document.createElement("p");
+
+			vidPicker.setAttribute("type", "file")
+			vidPicker.setAttribute("accept", "image/*")
+			vidPicker.setAttribute("id", "picker")
+			vidPicker.onchange = function() {
+				console.log(vidPicker.files[0]);
+				sendBlob(vidPicker.files[0]);
+				statusIndicator.innerHTML += "<br>";
+				statusIndicator.innerText += "Uploaded "+vidPicker.files[0].name;
+				vidPicker.style.backgroundColor = (vidPicker.style.backgroundColor == "red") ? "green" : "red";
+			};
+
+			statusIndicator.innerHTML = "Couldn't use UserMedia or similar fallback for the camera capture. We'll resort to a file picker instead.<br>"
+
+			document.body.appendChild(vidPicker);
+			document.body.appendChild(statusIndicator);
+		});
+
+    video.addEventListener("canplay", function(ev){
+			console.log("Playing video...");
+
+      if (!streaming) {
+        height = video.videoHeight / (video.videoWidth/width);
+
+        // Firefox currently has a bug where the height can"t be read from
+        // the video, so we will make assumptions if this happens.
+        if (isNaN(height)) {
+          height = width / (4/3);
+        }
+
+        video.setAttribute("width", width);
+        video.setAttribute("height", height);
+        canvas.setAttribute("width", width);
+        canvas.setAttribute("height", height);
+        streaming = true;
+      }
+    }, false);
+
+    startbutton.addEventListener("mousedown", function(ev) {
+      takepicture();
+      ev.preventDefault();
+			video.style.opacity = 0;
+    }, false);
+		startbutton.addEventListener("mouseup", function(ev) {
+			ev.preventDefault();
+			video.style.opacity = 100;
+		});
+
+    clearphoto();
+  }
+
+  // Just show gray if no photo available
+  function clearphoto() {
+		if (photo === null) {
+			console.warn("clearphoto called while photo is null.");
+			return;
+		}
+
+    var context = canvas.getContext("2d");
+    context.fillStyle = "#AAA";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+
+    var data = canvas.toDataURL("image/png");
+    photo.setAttribute("src", data);
+  }
+
+  // We get a data uri by putting the media stream onto a canvas
+  function takepicture() {
+    var context = canvas.getContext("2d");
+    if (width && height) {
+      canvas.width = width;
+      canvas.height = height;
+      context.drawImage(video, 0, 0, width, height);
+
+			canvas.toBlob(function(blob) {
+				sendBlob(blob);
+			});
+    } else {
+      clearphoto();
+    }
+  }
+
+	function sendBlob(blob) {
+		let req = new Request("/push", { method: "POST", body: blob });
+		fetch(req).then(function(resp) {
+			if (resp.status != 200) {
+				console.warn("Got non-OK status of "+resp.status+" in response.")
+				alert("Photo probably wasn't saved. Is the buffer full? (If it is, you can empty it by visiting /pop and refreshing the page a lot.)");
+			}
+		}).catch(function(err) {
+			console.error(err.name + ": " + err.message)
+		});
+	}
+
+  window.addEventListener("load", startup, false);
+})();
+		</script>
+		<style>
+			body {
+				margin: 0px;
+			}
+
+			#canvas {
+				display: none;
+			}
+
+			#video {
+				width: 100%;
+				height: 100vh;
+				transition: opacity 200ms;
+			}
+
+			#startbutton {
+			    position: fixed;
+			    top: calc(100vh - 65px);
+			    left: calc(50% - 25px);
+			    width: 50px;
+			    height: 50px;
+			    background-color: red;
+			    border-style: solid;
+			    border-width: 2px;
+			    border-color: rgba(27, 27, 27, 0.3);
+			    border-radius: 100%;
+			}
+
+			#startbutton:active {
+					background-color: darkred;
+			}
+
+			#picker {
+				height: 50vh;
+				width: 100%;
+				transition: background-color 400ms;
+			}
+		</style>
+		<canvas id="canvas"></canvas>
+		<video id="video">Video stream unavailable.</video>
+		<button id="startbutton" aria-label="Take picture"></button>
+	</body>
+</html>
