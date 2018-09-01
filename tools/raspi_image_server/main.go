@@ -12,11 +12,16 @@ import (
 	"github.com/ogier/pflag"
 )
 
-var cameraMux sync.Mutex
+var (
+	cameraMux sync.Mutex
+	execArgs  = []string{"-o", "-", "-t", "1", "-n"}
+)
 
 func main() {
 	bind := pflag.StringP("bind", "b", "localhost:8000", "Address to run the http server on.")
 	pflag.Parse()
+	execArgs = append(execArgs, pflag.Args()...)
+	log.Println(execArgs)
 
 	srv := &http.Server{
 		WriteTimeout: 8 * time.Second,
@@ -33,7 +38,7 @@ type handler struct{}
 
 func (handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	cameraMux.Lock()
-	cmd := exec.Command("raspistill", "-o", "-", "-t", "1", "-n")
+	cmd := exec.Command("raspistill", execArgs...)
 
 	stdout, err := cmd.StdoutPipe()
 	defer stdout.Close()
