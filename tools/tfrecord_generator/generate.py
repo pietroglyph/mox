@@ -40,6 +40,7 @@ BACKGROUND_NAMES = ["background1.png", "background2.png", "background3.png", "ba
 NUM_EVAL_EXAMPLES = 10
 MAX_ROTATION_DEGREES = 8
 MAX_BLUR_RADIUS = 1.3
+FLIPPED_PROBABILITY = 0.6
 
 tf.logging.set_verbosity(tf.logging.INFO)
 
@@ -51,6 +52,10 @@ def randomise_image(foreground_bytes, background_path):
 
     # Decide on a rotation
     rotation = random.randint(-MAX_ROTATION_DEGREES, MAX_ROTATION_DEGREES)
+
+    # Flip the card over at random
+    if random.random() > 1-FLIPPED_PROBABILITY:
+        rotation += 180
 
     # Downscale
     after_rotation_extra_size = (np.array(get_rotated_bounding_box_size(im.size, rotation))-im.size)
@@ -73,7 +78,7 @@ def randomise_image(foreground_bytes, background_path):
     bg = ImageEnhance.Color(bg).enhance(random.uniform(-MAX_COLOR_BALANCE_DELTA, MAX_COLOR_BALANCE_DELTA) + 1)
     bg = ImageEnhance.Brightness(bg).enhance(random.uniform(-MAX_BRIGHTNESS_DELTA, MAX_BRIGHTNESS_DELTA) + 1)
 
-    bg.format = "PNG" # Hmm... Interesting.
+    bg.format = "PNG"
 
     # bg.size should == (1024, 1024)
     return bg, tuple(margin+transform), after_thumbnail_size / origsize, origsize, rotation, (((np.array(bg.size)//2)-(np.array(after_thumbnail_size)//2))+transform)-(margin+transform)
@@ -84,9 +89,12 @@ def rotate_point(point, center, rotation_degrees):
     math.sin(r) * -(point[0] - center[0]) + math.cos(r) * (point[1] - center[1]) + center[1])
 
 def get_rotated_bounding_box_size(size, rotation_degrees):
+    if rotation_degrees > 90:
+        rotation_degrees = 180-rotation_degrees
+    # Deal with negative rotation
     if math.fabs(rotation_degrees) != rotation_degrees:
         rotation_degrees += 90
-        size = size[::-1]
+        size = size[::-1] # Reverse the array
     r = math.radians(rotation_degrees)
     return ((math.cos(r)*size[0])+(math.sin(r)*size[1]), (math.cos(r)*size[1])+(math.sin(r)*size[0]))
 
@@ -110,12 +118,14 @@ def create_tf_record_from_annotations(in_dir, in_ids, out_path):
         if randomised_image.format != "PNG":
             raise ValueError("Image format not PNG")
 
-        annotation["card"] = {
-            "startX": 0,
-            "startY": 0,
-            "endX": card_original_size[0],
-            "endY": card_original_size[1],
-        }
+        # Simulated annotation data doesn't include the card bounding box
+        if not "card" in annotation:
+            annotation["card"] = {
+                "startX": 0,
+                "startY": 0,
+                "endX": card_original_size[0],
+                "endY": card_original_size[1],
+            }
 
         startx = []
         starty = []
