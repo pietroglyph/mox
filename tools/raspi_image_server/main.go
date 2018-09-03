@@ -21,7 +21,6 @@ func main() {
 	bind := pflag.StringP("bind", "b", "localhost:8000", "Address to run the http server on.")
 	pflag.Parse()
 	execArgs = append(execArgs, pflag.Args()...)
-	log.Println(execArgs)
 
 	srv := &http.Server{
 		WriteTimeout: 8 * time.Second,
