@@ -26,16 +26,16 @@ Although a pretrained inference graph is provided, you can train your own with a
 
   ` $ rm -rf ../inference_graph; mv ./inference_graph/ ../`
 # Running the evaluation job
-Although the best way to evaluate the performance of the system is often to run it, you can visually verify the performance of the localizer using the following command:
+Although the best way to evaluate the performance of the system is often to run Mox in it's entirety, you can visually verify the performance of the localizer using the following command:
 
   (Current directory must be `mox/`)
 
   ` $ python {PATH TO TENSORFLOW MODELS REPO}/research/object_detection/train.py     --logtostderr     --pipeline_config_path=./models/text_localize_faster_rcnn/faster_rcnn_resnet101_mtg.config     --checkpoint_dir=./models/text_localize_faster_rcnn/train/     --eval_dir=./models/text_localize_faster_rcnn/eval/`
 # Annotating more data
-There are about 300 human-annotated examples provided in `raw_data`, but you may annotate more using the `label_helper` tool.
+There are about 300 human-annotated examples provided in `raw_data`, but you may annotate more using the `label_helper` tool. You can annotate from a real image source, or scanned card images from [Scryfall](https://scryfall.com).
 
 This assumes a working installation of [Go](https://golang.org/).
 1. ` $ cd mox/tools/label_helper`
 2. ` $ go get github.com/BlueMonday/go-scryfall; go get github.com/ogier/pflag`
 3. ` $ go install`
-4. ` $ label_helper -o "../../raw_data/"`
+4. ` $ label_helper -o "../../raw_data/simulated/"`
