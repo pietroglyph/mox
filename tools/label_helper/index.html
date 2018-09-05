@@ -11,13 +11,17 @@
 
     var canvas;
     var context;
+    var upsideDownCheckbox;
     var boundingBoxes = new Map();
     var drawing = false;
+    var cardImage;
 
     window.onload = function() {
       canvasElement = $("#card");
       canvas = canvasElement[0];
       context = canvas.getContext("2d");
+      upsideDownCheckbox = $("input[name=upsideDown]", "#boundingBoxForm");
+      cardImage = $("#cardImage")[0];
 
       canvas.scaleCoordinates = function(x, y) {
         let xScaleFactor = this.width / canvasElement.width();
@@ -57,6 +61,8 @@
             boundingBoxes.delete($("input[name=boundingBoxType]:checked", "#boundingBoxForm").val());
             redrawCanvas(context, boundingBoxes);
             return;
+          } else if (e.code == "KeyU") {
+            upsideDownCheckbox.click();
           } else {
             preventDefault = false;
           }
@@ -121,19 +127,17 @@
       }).mouseup(function() {
         drawing = false;
       }).mousemove(function(event) {
+        let rect = canvas.getBoundingClientRect();
+        let mousePos = canvas.scaleCoordinates(event.clientX - rect.left, event.clientY - rect.top);
         if (drawing) {
-          let rect = canvas.getBoundingClientRect();
           let radioName = $("input[name=boundingBoxType]:checked", "#boundingBoxForm").val();
 
-          let endCoords = canvas.scaleCoordinates(event.clientX - rect.left, event.clientY - rect.top);
           let bb = boundingBoxes.get(radioName);
-          bb.endX = endCoords.x;
-          bb.endY = endCoords.y;
-          console.log(bb);
+          bb.endX = mousePos.x;
+          bb.endY = mousePos.y;
           boundingBoxes.set(radioName, bb);
-
-          redrawCanvas(context, boundingBoxes);
         }
+        redrawCanvas(context, boundingBoxes, mousePos);
       });
 
       $("#save").click(function() {
@@ -150,6 +154,7 @@
             obj[k] = v;
         }
         obj.uuid = {{.UUID}};
+        obj.upsideDown = upsideDownCheckbox.is(':checked');
         req.send(JSON.stringify(obj));
       	req.onreadystatechange = function() {
             if (document.location.search.indexOf("?frame=") != 0) {
@@ -167,12 +172,10 @@
           document.location = document.location;
         }
       });
-
-      // $("body").css("width", $("#cardImage")[0].width * 2.5 + "px");
     };
 
-    function redrawCanvas(ctx, bbs) {
-      let cardImage = $("#cardImage")[0];
+    function redrawCanvas(ctx, bbs, mousePos) {
+      if (mousePos === undefined) mousePos = {x: -1, y: -1}
 
       canvas.width = cardImage.width;
       canvas.height = cardImage.height;
@@ -181,6 +184,16 @@
       context.clearRect(0, 0, canvas.width, canvas.height);
 
       ctx.drawImage(cardImage, 0, 0);
+
+      ctx.strokeStyle = "purple";
+      ctx.beginPath();
+      ctx.moveTo(mousePos.x, 0);
+      ctx.lineTo(mousePos.x, canvas.height);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(0, mousePos.y);
+      ctx.lineTo(canvas.width, mousePos.y);
+      ctx.stroke();
 
       bbs.forEach(function(v, k) {
         v.draw(context, k);
@@ -315,6 +328,10 @@
       <input type="radio" name="boundingBoxType" value="typeLine" data-color="pink"> Type Line ({{.TypeLine}})<br>
       <input type="radio" name="boundingBoxType" value="collectorNumber" data-color="red"> Collector Number ({{.CollectorNumber}})<br>
       <input type="radio" name="boundingBoxType" value="setSymbol" data-color="yellow"> Set Symbol ({{.Set}})<br>
+      {{ if not .PreloadedBoundingBoxes }}
+      <input type="radio" name="boundingBoxType" value="card" data-color="orange"> Card Border<br>
+      {{ end }}
+      <input type="checkbox" name="upsideDown" value="upsideDown" {{ if .PreloadedBoundingBoxes }}disabled{{ end }}> Upside Down<br>
       <i>All bounding boxes are optional.</i>
     </form>
     <table class="sidebar-item">
