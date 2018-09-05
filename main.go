@@ -58,7 +58,7 @@ func main() {
 		log.Panic(err)
 	}
 
-	// Generate/get a list of set symbols
+	// Generate/get an array of set symbols
 	setSymbols, err := setupSetSymbols(context, scryfallClient, config.SetSymbolDirectory, config.SetSymbolBackgroundPath, session, graph, config.GetNewSetSymbols)
 	if err != nil {
 		log.Panic(err)
@@ -68,7 +68,7 @@ func main() {
 	tessClient := gosseract.NewClient()
 	defer tessClient.Close()
 	tessClient.SetLanguage("eng")                 // Set the language to English (you may need to install this language for Tesseract)
-	tessClient.SetPageSegMode(gosseract.PSM_AUTO) // Set the segmentation mode
+	tessClient.SetPageSegMode(gosseract.PSM_AUTO) // Set the word segmentation mode
 
 	// Setup a SURF context
 	surf := contrib.NewSURF()
