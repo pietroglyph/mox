@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha1"
 	"encoding/base64"
@@ -8,11 +9,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"image"
+	_ "image/jpeg"
+	"image/png"
+	"io"
 	"io/ioutil"
 	"log"
 	"math/rand"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strconv"
 	"sync"
@@ -170,17 +176,31 @@ func handleDataIngest(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func imageBytesToCard(b *[]byte, suffix string) map[string]interface{} {
-	bSum := sha1.Sum(*b)
+func imageReaderToCard(r io.Reader, suffix string) (map[string]interface{}, error) {
+	img, _, err := image.Decode(r)
+	if err != nil {
+		return nil, err
+	}
+
+	var buf bytes.Buffer
+	err = png.Encode(&buf, img)
+	if err != nil {
+		return nil, err
+	}
+	imageBytes := buf.Bytes()
+
+	ioutil.WriteFile("/home/declan/foo.png", imageBytes, 600)
+
+	bSum := sha1.Sum(imageBytes)
 	uuid := hex.EncodeToString(bSum[:]) + "." + suffix
 
 	recentImagesMux.Lock()
-	recentImages[uuid] = *b
+	recentImages[uuid] = imageBytes
 	recentImagesMux.Unlock()
 
 	return map[string]interface{}{
 		"UUID":                  uuid,
-		"URI":                   template.URL("data:image/png;base64," + base64.StdEncoding.EncodeToString(*b)),
+		"URI":                   template.URL("data:image/png;base64," + base64.StdEncoding.EncodeToString(imageBytes)),
 		"CardName":              "Unknown Card",
 		"TypeLine":              "Unknown Type Line",
 		"CollectorNumber":       "Unknown Collector Number",
@@ -188,7 +208,7 @@ func imageBytesToCard(b *[]byte, suffix string) map[string]interface{} {
 		"CardNameHelper":        helperTextCSS{},
 		"TypeLineHelper":        helperTextCSS{},
 		"CollectorNumberHelper": helperTextCSS{},
-	}
+	}, nil
 }
 
 func getHTTPCard(_ url.Values) (map[string]interface{}, error) {
@@ -197,12 +217,12 @@ func getHTTPCard(_ url.Values) (map[string]interface{}, error) {
 		return nil, err
 	}
 
-	b, err := ioutil.ReadAll(resp.Body)
+	cardInfo, err := imageReaderToCard(resp.Body, "http")
 	if err != nil {
 		return nil, err
 	}
 
-	return imageBytesToCard(&b, "http"), nil
+	return cardInfo, nil
 }
 
 func getRandomLocalCard(query url.Values) (map[string]interface{}, error) {
@@ -217,12 +237,17 @@ func getRandomLocalCard(query url.Values) (map[string]interface{}, error) {
 		imgPath = pathFromQuery
 	}
 
-	b, err := ioutil.ReadFile(imgPath)
+	cardReader, err := os.Open(imgPath)
 	if err != nil {
 		return nil, err
 	}
 
-	return imageBytesToCard(&b, "local"), nil
+	cardInfo, err := imageReaderToCard(cardReader, "local")
+	if err != nil {
+		return nil, err
+	}
+
+	return cardInfo, nil
 }
 
 func getRandomScryfallCard(query url.Values) (map[string]interface{}, error) {
