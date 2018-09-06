@@ -18,6 +18,7 @@ import glob
 import json
 import math
 import numpy as np
+import copy
 
 import tensorflow as tf
 
@@ -51,9 +52,9 @@ def randomise_image(foreground_bytes, background_path):
     im = Image.open(foreground_bytes)
     if not background_path in background_cache:
         bg = Image.open(background_path, mode="r")
-        background_cache[background_path] = bg
+        background_cache[background_path] = copy.deepcopy(bg)
     else:
-        bg = background_cache[background_path]
+        bg = copy.deepcopy(background_cache[background_path])
 
     origsize = im.size
 
