@@ -8,11 +8,13 @@ import (
 	"image/jpeg"
 	"io/ioutil"
 	"log"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
 
 	scryfall "github.com/BlueMonday/go-scryfall"
+	"github.com/BurntSushi/graphics-go/graphics"
 	"github.com/disintegration/imaging"
 	"github.com/oliamb/cutter"
 	"github.com/otiai10/gosseract"
@@ -175,15 +177,19 @@ func inferCroppedSections(imageData []byte, session *tf.Session, graph *tf.Graph
 		return nil, nil, err
 	}
 
+	var upsideDown bool
 	for i := range highestProbabilities {
 		if i == cardIndex {
 			continue // Currently unused
 		}
 
+		normalizedY1 := boxes[bestIndicies[i]][0]
+		normalizedY2 := boxes[bestIndicies[i]][2]
+
 		x1 := float32(img.Bounds().Max.X) * boxes[bestIndicies[i]][1]
 		x2 := float32(img.Bounds().Max.X) * boxes[bestIndicies[i]][3]
-		y1 := float32(img.Bounds().Max.Y) * boxes[bestIndicies[i]][0]
-		y2 := float32(img.Bounds().Max.Y) * boxes[bestIndicies[i]][2]
+		y1 := float32(img.Bounds().Max.Y) * normalizedY1
+		y2 := float32(img.Bounds().Max.Y) * normalizedY2
 
 		cropped, err := cutter.Crop(img, cutter.Config{
 			Width:  int(x2 - x1),
@@ -195,8 +201,21 @@ func inferCroppedSections(imageData []byte, session *tf.Session, graph *tf.Graph
 			return nil, nil, err
 		}
 
+		if (normalizedY1+normalizedY2)/2 > 0.5 && i == nameIndex {
+			upsideDown = true
+		}
+
 		images = append(images, cropped)
 		classIndicies = append(classIndicies, i)
+	}
+
+	if upsideDown {
+		for i := range images {
+			newImage := image.NewRGBA(images[i].Bounds())
+			graphics.Rotate(newImage, images[i], &graphics.RotateOptions{Angle: math.Pi})
+			images[i] = newImage
+		}
+		log.Println("Upside down.")
 	}
 
 	return images, classIndicies, nil
@@ -212,9 +231,7 @@ func inferPartialCardData(imageData []byte, session *tf.Session, graph *tf.Graph
 	for i, cropped := range crops {
 		if classIndicies[i] == cardIndex {
 			continue // Currently unused
-		}
-
-		if classIndicies[i] == setSymbolIndex {
+		} else if classIndicies[i] == setSymbolIndex {
 			inferredData.SetSymbol = cropped
 			continue
 		}
