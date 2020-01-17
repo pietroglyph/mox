@@ -5,12 +5,12 @@ Classifying, and physically sorting, Magic: The Gathering cards.
 - [X] Tools for annotating data
 - [X] Tools for exporting data, and doing data augmentation
 - [X] Basic inference
-- [ ] Accurate classification
+- [X] Accurate classification
   - [X] Card name classification
   - [ ] Set specific classification
 - [ ] Inference time optimizations
-- [ ] Design of the sorting machine for 3D printing
-- [ ] Control of the sorting machine
+- [X] Design of the sorting machine for 3D printing
+- [X] Control of the sorting machine
 - [ ] Cataloging capabilities
 
 ## Examples
